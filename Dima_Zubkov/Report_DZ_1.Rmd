@@ -2,7 +2,7 @@
 title: "TCGA_SKCM_Report_DZ_1"
 author: "Dmitry Zubkov"
 date: "December 7, 2022"
-output: md_document
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
