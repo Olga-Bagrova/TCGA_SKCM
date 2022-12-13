@@ -2,7 +2,7 @@
 title: "TCGA_SKCM_Report_DZ_2"
 author: "Dmitry Zubkov"
 date: "December 13, 2022"
-output: html_document
+output: md_document
 ---
 
 ```{r setup, include=FALSE}
@@ -30,7 +30,7 @@ df.t <- df.t[!zeros, ]
 
 ```
 
-```{r transcriptomics_transformation}
+```{r transformation}
 
 mat.raw <- t(df.t[-1])
 colnames(mat.raw) <- df.t$Entrez_Gene_Id
@@ -46,6 +46,28 @@ mat.log <- log2(apply(mat.raw, 2, imp_zeros))
   
 #mat.log <- log2(mat.raw + 1)
 
+```
+
+### Log2 (imputed values), median centered, no scaling
+
+```{r heatmap_4}
+features <- 
+  apply(mat.log, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+
+mat.scaled <- apply(mat.log, 2, function(x) x - median(x))
+
+mat <- mat.scaled[, features]
+
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes")
+```
+
+### Log2 (imputed values), median centered, mad scaled
+
+```{r heatmap_3}
 features <- 
   apply(mat.log, 2, mad) %>%
   sort(decreasing = T) %>%
@@ -54,26 +76,11 @@ features <-
 
 mat.scaled <- apply(mat.log, 2, function(x) (x - median(x))/mad(x))
 
-mat.scaled <- apply(mat.log, 2, function(x) (x - mean(x))/sd(x))
-
-mat <- mat.scaled[, features]
-```
-
-
-### Log2 (imputed values), mean centered, sd scaled
-
-```{r heatmap_1}
-features <- 
-  apply(mat.log, 2, sd) %>%
-  sort(decreasing = T) %>%
-  .[1:1500] %>%
-  names()
-
-mat.scaled <- apply(mat.log, 2, function(x) (x - mean(x))/sd(x))
-
 mat <- mat.scaled[, features]
 
-Heatmap(mat, show_row_names = F, show_column_names = F)
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes")
+
 ```
 
 ### Log2 (imputed values), mean centered, no scaling
@@ -90,48 +97,32 @@ mat.scaled <- apply(mat.log, 2, function(x) x - mean(x))
 
 mat <- mat.scaled[, features]
 
-Heatmap(mat, show_row_names = F, show_column_names = F)
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes")
+
 ```
 
-### Log2 (imputed values), median centered, mad scaled
+### Log2 (imputed values), mean centered, sd scaled
 
-```{r heatmap_3}
+```{r heatmap_1}
 features <- 
-  apply(mat.log, 2, mad) %>%
+  apply(mat.log, 2, sd) %>%
   sort(decreasing = T) %>%
   .[1:1500] %>%
   names()
 
-mat.scaled <- apply(mat.log, 2, function(x) (x - median(x))/mad(x))
+mat.scaled <- apply(mat.log, 2, function(x) (x - mean(x))/sd(x))
 
 mat <- mat.scaled[, features]
 
-Heatmap(mat, show_row_names = F, show_column_names = F)
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes")
+
+pca <- prcomp(mat, center = F, scale = F, rank = 10)
+fviz_pca_ind(pca, geom.ind = "point")
+fviz_pca_var(pca, geom.var = "point")
+
 ```
-
-### Log2 (imputed values), median centered, no scaling
-
-```{r heatmap_4}
-features <- 
-  apply(mat.log, 2, mad) %>%
-  sort(decreasing = T) %>%
-  .[1:1500] %>%
-  names()
-
-mat.scaled <- apply(mat.log, 2, function(x) x - median(x))
-
-mat <- mat.scaled[, features]
-
-Heatmap(mat, show_row_names = F, show_column_names = F)
-```
-
-```{r pca, eval = FALSE}
-df.pca.1 <- prcomp(mat, scale = F, rank = 10)
-df.pca.2 <- prcomp(mat, scale = T, rank = 10)
-fviz_pca_ind(df.pca.1, geom.ind = "point")
-fviz_pca_ind(df.pca.2, geom.ind = "point")
-```
-
 
 ```{r clust, eval = FALSE}
 
@@ -144,8 +135,6 @@ hc <-
 ```
 
 ```{r clust_plot, eval = FALSE}
-
-fviz_dend(hc, show_labels = F)
 
 grp <- cutree(hc, k = 2)
 
