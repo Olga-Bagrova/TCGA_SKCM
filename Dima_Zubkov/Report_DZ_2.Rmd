@@ -1,7 +1,7 @@
 ---
 title: "TCGA_SKCM_Report_DZ_2"
 author: "Dmitry Zubkov"
-date: "December 13, 2022"
+date: "December 14, 2022"
 output: md_document
 ---
 
@@ -50,7 +50,7 @@ mat.log <- log2(apply(mat.raw, 2, imp_zeros))
 
 ### Log2 (imputed values), median centered, no scaling
 
-```{r heatmap_4}
+```{r heatmap_1}
 features <- 
   apply(mat.log, 2, mad) %>%
   sort(decreasing = T) %>%
@@ -62,12 +62,16 @@ mat.scaled <- apply(mat.log, 2, function(x) x - median(x))
 mat <- mat.scaled[, features]
 
 Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes")
+        row_title = "Samples", column_title = "Genes",
+        clustering_distance_rows = "euclidean",
+        clustering_method_rows = "average",
+        clustering_distance_columns = "euclidean",
+        clustering_method_columns = "average")
 ```
 
 ### Log2 (imputed values), median centered, mad scaled
 
-```{r heatmap_3}
+```{r heatmap_2}
 features <- 
   apply(mat.log, 2, mad) %>%
   sort(decreasing = T) %>%
@@ -79,13 +83,17 @@ mat.scaled <- apply(mat.log, 2, function(x) (x - median(x))/mad(x))
 mat <- mat.scaled[, features]
 
 Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes")
+        row_title = "Samples", column_title = "Genes",
+        clustering_distance_rows = "euclidean",
+        clustering_method_rows = "average",
+        clustering_distance_columns = "euclidean",
+        clustering_method_columns = "average")
 
 ```
 
 ### Log2 (imputed values), mean centered, no scaling
 
-```{r heatmap_2}
+```{r heatmap_3}
 
 features <- 
   apply(mat.log, 2, sd) %>%
@@ -98,13 +106,17 @@ mat.scaled <- apply(mat.log, 2, function(x) x - mean(x))
 mat <- mat.scaled[, features]
 
 Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes")
+        row_title = "Samples", column_title = "Genes",
+        clustering_distance_rows = "euclidean",
+        clustering_method_rows = "average",
+        clustering_distance_columns = "euclidean",
+        clustering_method_columns = "average")
 
 ```
 
 ### Log2 (imputed values), mean centered, sd scaled
 
-```{r heatmap_1}
+```{r heatmap_4}
 features <- 
   apply(mat.log, 2, sd) %>%
   sort(decreasing = T) %>%
@@ -116,11 +128,26 @@ mat.scaled <- apply(mat.log, 2, function(x) (x - mean(x))/sd(x))
 mat <- mat.scaled[, features]
 
 Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes")
+        row_title = "Samples", column_title = "Genes",
+        clustering_distance_rows = "euclidean",
+        clustering_method_rows = "average",
+        clustering_distance_columns = "euclidean",
+        clustering_method_columns = "average")
 
 pca <- prcomp(mat, center = F, scale = F, rank = 10)
 fviz_pca_ind(pca, geom.ind = "point")
 fviz_pca_var(pca, geom.var = "point")
+
+ck.bp <- clusterProfiler::compareCluster(geneCluster = list("1500 genes" = colnames(mat)),
+                                         fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "BP",
+                                         pvalueCutoff = 0.01, qvalueCutoff =  0.01)
+
+
+clusterProfiler::dotplot(ck.bp, by = "count", showCategory = 20, 
+                         title = "Gene Ontology enrichment") + 
+  scale_colour_gradient(limits=c(0, 0.001), low="red", high="blue") +
+  theme(plot.title = element_text(hjust = 0.5))
+
 
 ```
 
