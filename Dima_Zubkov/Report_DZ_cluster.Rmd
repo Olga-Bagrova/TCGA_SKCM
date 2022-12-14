@@ -1,0 +1,110 @@
+---
+title: "TCGA_SKCM_Report_DZ"
+author: "Dmitry Zubkov"
+date: "December 14, 2022"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(factoextra)
+library(ggbiplot)
+library(ComplexHeatmap)
+library(dendextend)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, 
+                      message = FALSE, 
+                      fig.width = 12, fig.height = 12)
+```
+
+
+## Transcriptomics data
+
+```{r download_transformation}
+
+df.t <- 
+  read_tsv("../raw/data_mrna_seq_v2_rsem.txt") %>%
+  select(-Hugo_Symbol) %>%
+  distinct(Entrez_Gene_Id, .keep_all = TRUE)
+
+zeros <- apply(as.matrix(df.t[-1]), 1, function(x) all(x == 0))
+
+df.t <- df.t[!zeros, ]
+
+mat.raw <- t(df.t[-1])
+colnames(mat.raw) <- df.t$Entrez_Gene_Id
+rownames(mat.raw) <- colnames(df.t)[-1]
+
+imp_zeros <- function(x) {
+  x[x == 0] <- NA
+  x[is.na(x)] <- min(x, na.rm = T)/2
+  return(x)
+}
+
+#mat.log <- log2(apply(mat.raw, 2, imp_zeros))
+mat.log <- log2(mat.raw + 1)
+
+features <- 
+  apply(mat.log, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+
+mat.scaled <- apply(mat.log, 2, function(x) (x - median(x))/mad(x))
+
+mat <- mat.scaled[, features]
+
+```
+
+### Log2 (x + 1), median centered, mad scaled
+
+### Подбор метода кластеризации для образцов
+```{r clust_row, fig.width = 12, fig.height = 6}
+
+for (i in c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")) {
+  for (j in c("ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")) {
+    row_dend <- 
+    dist(mat, method = i) %>%
+    hclust(method = j) %>%
+    as.dendrogram() %>%
+    color_branches(k = 5)
+  
+  plot(row_dend, 
+       main = "Samples dendrogram",
+       sub = paste0("Distance method = ", i, ", Clustering method = ", j))
+  }
+}
+
+```
+
+```{r clust_col, eval = FALSE}
+
+col_dend <- 
+  dist(t(mat), method = "euclidian") %>%
+  hclust(method = "average") %>%
+  as.dendrogram()
+```
+
+```{r heatmap, eval = FALSE}
+
+row_dend <- color_branches(row_dend, k = 5)
+
+col_dend <- color_branches(col_dend, k = 5)
+
+
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes",
+        row_dend_width = unit(40, "mm"),
+        column_dend_height = unit(40, "mm"),
+        cluster_rows = row_dend,
+        cluster_columns = col_dend)
+
+Heatmap(mat, show_row_names = F, show_column_names = F,
+        row_title = "Samples", column_title = "Genes",
+        row_dend_width = unit(40, "mm"),
+        column_dend_height = unit(40, "mm"),
+        clustering_distance_rows = "euclidean",
+        clustering_method_rows = "average",
+        clustering_distance_columns = "euclidean",
+        clustering_method_columns = "average")
+```
