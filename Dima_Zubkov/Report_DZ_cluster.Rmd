@@ -18,7 +18,9 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE,
 ```
 
 
-## Transcriptomics data
+## Data download and preprocessing
+
+### (log2(x + 1), median centered, mad scaled)
 
 ```{r download_transformation}
 
@@ -56,9 +58,7 @@ mat <- mat.scaled[, features]
 
 ```
 
-### Log2 (x + 1), median centered, mad scaled
-
-### Подбор метода кластеризации для образцов
+## Selection of clusterization method for samples
 ```{r clust_row, fig.width = 12, fig.height = 6}
 
 for (i in c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")) {
@@ -69,42 +69,10 @@ for (i in c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowsk
     as.dendrogram() %>%
     color_branches(k = 5)
   
-  plot(row_dend, 
-       main = "Samples dendrogram",
-       sub = paste0("Distance method = ", i, ", Clustering method = ", j))
+  plot(row_dend,
+       labels = FALSE,
+       main = paste0("Distance method = ", i, ", Clustering method = ", j))
   }
 }
 
-```
-
-```{r clust_col, eval = FALSE}
-
-col_dend <- 
-  dist(t(mat), method = "euclidian") %>%
-  hclust(method = "average") %>%
-  as.dendrogram()
-```
-
-```{r heatmap, eval = FALSE}
-
-row_dend <- color_branches(row_dend, k = 5)
-
-col_dend <- color_branches(col_dend, k = 5)
-
-
-Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes",
-        row_dend_width = unit(40, "mm"),
-        column_dend_height = unit(40, "mm"),
-        cluster_rows = row_dend,
-        cluster_columns = col_dend)
-
-Heatmap(mat, show_row_names = F, show_column_names = F,
-        row_title = "Samples", column_title = "Genes",
-        row_dend_width = unit(40, "mm"),
-        column_dend_height = unit(40, "mm"),
-        clustering_distance_rows = "euclidean",
-        clustering_method_rows = "average",
-        clustering_distance_columns = "euclidean",
-        clustering_method_columns = "average")
 ```
