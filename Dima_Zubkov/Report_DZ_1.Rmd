@@ -1,15 +1,28 @@
 ---
 title: "TCGA_SKCM_Report_DZ_1"
 author: "Dmitry Zubkov"
-date: "December 7, 2022"
-output: html_document
+date: "December 16, 2022"
+output: md_document
 ---
 
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(gtsummary)
+library(survival)
+library(survminer)
+#library(factoextra)
+#library(ggbiplot)
+theme_set(theme_bw())
 
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+par.s <- c("PATIENT_ID", "SAMPLE_ID", "TISSUE_PROSPECTIVE_COLLECTION_INDICATOR", "TISSUE_RETROSPECTIVE_COLLECTION_INDICATOR", "SAMPLE_TYPE", "TISSUE_SOURCE_SITE", "ANEUPLOIDY_SCORE", "TMB_NONSYNONYMOUS")
+
+par.s.add <- c("PATIENT_ID", "SAMPLE_ID", "MSI_SCORE_MANTIS", "MSI_SENSOR_SCORE")
+
+par.p <- c("PATIENT_ID", "SEX", "AJCC_STAGING_EDITION", "AGE", "WEIGHT", "PERSON_NEOPLASM_CANCER_STATUS")
+
+par.p.add <- c("PATIENT_ID", "ETHNICITY", "RACE", "HISTORY_NEOADJUVANT_TRTYN", "NEW_TUMOR_EVENT_AFTER_INITIAL_TREATMENT", "PRIOR_DX", "RADIATION_THERAPY")
 ```
 
 ## Clinical Data 
@@ -20,7 +33,7 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ```{r sample}
 df.s <- read_tsv("../raw/data_clinical_sample.txt", skip = 4)
 
-skimr::skim(df.s)
+#skimr::skim(df.s)
 ```
 
 ### Download patient data
@@ -28,25 +41,132 @@ skimr::skim(df.s)
 ```{r patient}
 df.p <- read_tsv("../raw/data_clinical_patient.txt", skip = 4)
 
-skimr::skim(df.p)
+#skimr::skim(df.p)
 ```
 
-### Clean data: selected variables, no duplicated patients
+### Join patients and samples, remove duplicated patients
 
 ```{r clean}
-df.p <- select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
-df.s <- select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
+
+# df.p <- select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_STAGING_EDITION, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
+# df.s <- select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
 
 duplicates <- df.s$PATIENT_ID[duplicated(df.s$PATIENT_ID)]
 
 df.meta <-
   left_join(df.p, df.s) %>%
-  filter(!(PATIENT_ID %in% duplicates))
+  filter(!(PATIENT_ID %in% duplicates)) %>%
+  filter(SAMPLE_ID != "TCGA-GN-A269-01")
 
-df.meta %>%
-  select(-PATIENT_ID, -SAMPLE_ID) %>%
-  tbl_summary()
+rm(df.s, df.p)
 
 ```
 
+### Plot parameters
 
+```{r hist, fig.width = 6.7, fig.height = 4}
+df.num <-
+  df.meta %>%
+  select(all_of(c(par.s, par.p))) %>%
+  mutate(AJCC_STAGING_EDITION = as.numeric(as.factor(AJCC_STAGING_EDITION))) %>%
+  mutate(log10TMB = log10(TMB_NONSYNONYMOUS)) %>%
+  select(SAMPLE_ID, where(is.numeric)) %>%
+  pivot_longer(-1, names_to = "Parameter", values_to = "Values") %>%
+  mutate(Parameter = factor(Parameter, levels = c("AGE", "WEIGHT", "AJCC_STAGING_EDITION", "ANEUPLOIDY_SCORE", "TMB_NONSYNONYMOUS", "log10TMB")))
+
+NAs <- 
+  df.num %>%
+  group_by(Parameter) %>%
+  dplyr::summarise(NAs = sum(is.na(Values))) %>%
+  mutate(x = c(12.5, 25, 1, 0, 150, -0.5),
+         y = c(30, 25, 175, 60, 225, 45))
+
+ggplot(df.num, aes(x = Values)) +
+  facet_wrap(~Parameter, scale = "free") +
+  geom_histogram() +
+  geom_text(data = NAs, 
+            aes(x = x, y= y, label = paste(NAs, "NA")),
+            hjust = 0) +
+  xlab("") +
+  ylab("")
+
+```
+
+```{r ggtable, fig.width = 6.7, fig.height = 4}
+df.meta %>%
+  select(all_of(c(par.s, par.p))) %>%
+  select(where(is.character)) %>%
+  select(-PATIENT_ID, -SAMPLE_ID, -AJCC_STAGING_EDITION, -TISSUE_SOURCE_SITE) %>%
+  tbl_summary()
+```
+
+
+```{r survival, fig.width = 4, fig.height = 3}
+
+fit <- survfit(Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ 1, data = df.meta)
+
+ggsurvplot(fit, data = df.meta,
+                 color = "black",
+                 legend = "none",
+                 title = "Overall Survival")
+
+fit <- survfit(Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ 1, data = df.meta)
+
+ggsurvplot(fit, data = df.meta,
+                 color = "black",
+                 legend = "none",
+                 title = "Progression-free Survival")
+```
+
+## Transcriptomics data
+
+```{r transcriptomics, eval = FALSE}
+
+df.t <- 
+  read_tsv("../raw/data_mrna_seq_v2_rsem.txt") %>%
+  select(-Hugo_Symbol) %>%
+  distinct(Entrez_Gene_Id, .keep_all = TRUE)
+
+zeros <- apply(as.matrix(df.t[-1]), 1, function(x) all(x == 0))
+
+df.t <- df.t[!zeros, ]
+
+mat.raw <- t(df.t[-1])
+colnames(mat.raw) <- df.t$Entrez_Gene_Id
+rownames(mat.raw) <- colnames(df.t)[-1]
+
+imp_zeros <- function(x) {
+  x[x == 0] <- NA
+  x[is.na(x)] <- min(x, na.rm = T)/2
+  return(x)
+}
+
+mat.log <- log2(apply(mat.raw, 2, imp_zeros))
+  
+features <- 
+  apply(mat.log, 2, sd) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+
+mat.scaled <- apply(mat.log, 2, function(x) (x - mean(x))/sd(x))
+
+mat <- mat.scaled[, features]
+
+```
+```{r pca, eval = FALSE}
+
+df <- 
+  tibble(SAMPLE_ID = rownames(mat)) %>% 
+  left_join(df.meta)
+pca <- prcomp(mat, center = F, scale = F, rank = 10)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = df$SEX)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = df$RACE)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = df$ETHNICITY)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = df$TMB_NONSYNONYMOUS)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = df$AGE)
+fviz_pca_ind(pca, geom.ind = "point", col.ind = as.numeric(as.factor(df$AJCC_STAGING_EDITION)))
+
+#fviz_pca_var(pca, geom.var = "point")
+
+```
