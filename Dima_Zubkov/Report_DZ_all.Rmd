@@ -1,0 +1,242 @@
+---
+title: "TCGA_SKCM_Report_DZ_2"
+author: "Dmitry Zubkov"
+date: "December 15, 2022"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(survival)
+library(survminer)
+#library(gtsummary)
+library(factoextra)
+library(ComplexHeatmap)
+library(dendextend)
+theme_set(theme_bw())
+
+color <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, 
+                      message = FALSE)
+```
+
+## Clinical data
+
+```{r clinical}
+df.s <- read_tsv("../raw/data_clinical_sample.txt", skip = 4)
+df.p <- read_tsv("../raw/data_clinical_patient.txt", skip = 4)
+
+df.p <- select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_STAGING_EDITION, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
+df.s <- select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
+
+duplicates <- df.s$PATIENT_ID[duplicated(df.s$PATIENT_ID)]
+
+df.meta <-
+  left_join(df.p, df.s) %>%
+  filter(!(PATIENT_ID %in% duplicates)) %>%
+  #filter(SAMPLE_TYPE == "Metastasis") %>%
+  filter(SAMPLE_ID != "TCGA-GN-A269-01")
+
+rm(df.s, df.p)
+
+```
+
+## Transcriptomics data
+
+```{r download_transformation}
+
+df.t <- 
+  read_tsv("../raw/data_mrna_seq_v2_rsem.txt") %>%
+  select(-Hugo_Symbol) %>%
+  select(Entrez_Gene_Id, all_of(df.meta$SAMPLE_ID)) %>%
+  distinct(Entrez_Gene_Id, .keep_all = TRUE)
+
+mat <- t(df.t[-1])
+colnames(mat) <- df.t$Entrez_Gene_Id
+rownames(mat) <- colnames(df.t)[-1]
+
+mat <- log2(mat + 1)
+
+features <- 
+  apply(mat, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+
+mat <- apply(mat, 2, function(x) (x - median(x))/mad(x))
+
+mat <- mat[, features]
+
+rm(df.t)
+
+```
+
+### Quick heatmap
+
+```{r clustering}
+
+smpl.dend <- 
+  dist(mat, method = "euclidian") %>%
+  hclust(method = "ward.D2") %>%
+  as.dendrogram()
+
+gene.dend <- 
+  dist(t(mat), method = "euclidian") %>%
+  hclust(method = "ward.D2") %>%
+  as.dendrogram()
+
+k.smpl <- 2
+k.gene <- 4
+
+smpl.dend <- color_branches(smpl.dend, k = k.smpl, col = color[1:k.smpl])
+gene.dend <- color_branches(gene.dend, k = k.gene, col = color[1:k.gene])
+
+#quick heatmap for checking results and cluster numbers
+
+Heatmap(t(mat), 
+        show_row_names = F, show_column_names = F,
+        name = "Gene expression",
+        row_title = "G%s", column_title = "S%s",
+        row_dend_width = unit(10, "mm"),
+        column_dend_height = unit(10, "mm"),
+        show_heatmap_legend = FALSE,
+        cluster_rows = gene.dend,
+        cluster_columns = smpl.dend)
+```
+
+### Gene ontology by gene clusters
+
+```{r gene_ontology}
+grp <- cutree(gene.dend, k = k.gene)
+grp <- case_when(grp == 1 ~ "G4",
+                 grp == 2 ~ "G2",
+                 grp == 3 ~ "G1",
+                 grp == 4 ~ "G3")
+
+ck.bp <- clusterProfiler::compareCluster(geneCluster = list("G1" = colnames(mat)[grp == "G1"],
+                                                            "G2" = colnames(mat)[grp == "G2"],
+                                                            "G3" = colnames(mat)[grp == "G3"],
+                                                            "G4" = colnames(mat)[grp == "G4"]),
+                                         fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "BP",
+                                         universe = colnames(mat),
+                                         pvalueCutoff = 0.05, qvalueCutoff = 1)
+
+clusterProfiler::dotplot(ck.bp, by = "count", showCategory = 5, 
+                         title = "Gene Ontology enrichment") + 
+  scale_colour_gradient(limits=c(0, 0.01), low="red", high="blue") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+GO <-
+  ck.bp@compareClusterResult[c(1, 3, 7)] %>%
+  as_tibble() %>%
+  group_by(Cluster) %>%
+  slice_min(order_by = p.adjust, n = 5)
+
+text_list = list(
+    text1 = filter(GO, Cluster == "G1")$Description,
+    text2 = filter(GO, Cluster == "G2")$Description,
+    text3 = filter(GO, Cluster == "G3")$Description,
+    text4 = "No enriched GO terms"
+)
+
+rm(ck.bp, GO)
+
+```
+
+### Complete heatmap
+
+```{r heatmap, fig.width = 12, fig.height = 8}
+smpl.ha <- HeatmapAnnotation(Survival = anno_block(gp = gpar(fill = color[1:k.smpl]),
+                                                   labels = c("Higher survival", "Lower survival"),
+                                                   labels_gp = gpar(col = "white", fontsize = 14)),
+                             #Sex = df.meta$SEX,
+                             #Age = df.meta$AGE,
+                             #log10TMB = log10(df.meta$TMB_NONSYNONYMOUS
+                             `Sample Type` = df.meta$SAMPLE_TYPE)
+
+gene.ha <- rowAnnotation(foo = anno_empty(border = FALSE, width = max_text_width(unlist(text_list)) + unit(4, "mm")))
+
+p <- Heatmap(t(mat), 
+        show_row_names = F, show_column_names = F,
+        name = "Gene expression",
+        top_annotation = smpl.ha,
+        right_annotation = gene.ha,
+        row_title = "G%s", column_title = "S%s",
+        row_dend_width = unit(10, "mm"),
+        column_dend_height = unit(10, "mm"),
+        show_heatmap_legend = FALSE,
+        cluster_rows = gene.dend,
+        cluster_columns = smpl.dend,
+        row_split = k.gene,
+        column_split = k.smpl)
+
+png("heatmap_all.png", width = 9, height = 6, units = "in", res = 300)
+draw(p)
+for(i in 1:k.gene) {
+    decorate_annotation("foo", slice = i, {
+        grid.rect(x = 0, width = unit(2, "mm"), 
+                  gp = gpar(fill = color[i], col = NA, fontsize = 10), just = "left")
+        grid.text(paste(text_list[[i]], collapse = "\n"), 
+                  x = unit(4, "mm"), just = "left")
+    })
+}
+dev.off()
+```
+
+### Survival analysis
+
+```{r survival, fig.width = 4, fig.height = 3}
+grp <- cutree(smpl.dend, k = k.smpl)
+grp <- case_when(grp == 1 ~ "S2",
+                 grp == 2 ~ "S1")
+df <- 
+  df.meta %>%
+  mutate(CLUSTER = as.factor(grp))
+
+fit <- survfit(Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER + SAMPLE_TYPE, data = df)
+
+# survdiff(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, data = df)
+
+ggsurvplot(fit, data = df,
+                 color = "CLUSTER",
+                 linetype = "SAMPLE_TYPE",
+                 legend = "right", palette = "Set1",
+                 legend.title = "CLUSTER",
+                 title = "Overall Survival")
+
+fit <- survfit(Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ CLUSTER + SAMPLE_TYPE, data = df)
+
+ggsurvplot(fit, data = df,
+                 color = "CLUSTER",
+                 linetype = "SAMPLE_TYPE",
+                 legend = "right", palette = "Set1",
+                 legend.title = "CLUSTER",
+                 title = "Progression-free Survival")
+
+```
+
+### PCA + clustering
+
+```{r PCA, fig.width = 4, fig.height = 3}
+
+grp <- cutree(smpl.dend, k = k.smpl)
+
+fviz_cluster(list(data = mat, cluster = grp),
+             palette = "Set1",
+             geom = "point",
+             ellipse.type = "convex",
+             show.clust.cent = FALSE,
+             main = "Sample clusters",
+             ggtheme = theme_minimal())
+
+grp <- cutree(gene.dend, k = k.gene)
+
+fviz_cluster(list(data = t(mat), cluster = grp),
+             palette = "Set1",
+             geom = "point",
+             ellipse.type = "convex",
+             show.clust.cent = FALSE,
+             main = "Gene clusters",
+             ggtheme = theme_minimal())
+```
