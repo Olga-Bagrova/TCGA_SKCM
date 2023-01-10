@@ -1,0 +1,166 @@
+---
+title: "TCGA_SKCM_Report_DZ_model"
+author: "Dmitry Zubkov"
+date: "December 30, 2022"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+# library(ggpubr)
+library(survival)
+library(survminer)
+library(glmnet)
+# library(gtsummary)
+# library(factoextra)
+library(ComplexHeatmap)
+library(dendextend)
+# library(clusterProfiler)
+theme_set(theme_bw())
+
+color <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, 
+                      message = FALSE)
+```
+
+## Clinical data
+
+```{r clinical}
+df.s <- read_tsv("../raw/data_clinical_sample.txt", skip = 4)
+df.p <- read_tsv("../raw/data_clinical_patient.txt", skip = 4)
+
+df.p <- dplyr::select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_PATHOLOGIC_TUMOR_STAGE, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
+df.s <- dplyr::select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
+
+df.meta <-
+  left_join(df.p, df.s) %>%
+  filter(SAMPLE_TYPE == "Metastasis") %>%
+  filter(SAMPLE_ID != "TCGA-GN-A269-01") %>%
+  mutate(STAGE = case_when(is.na(AJCC_PATHOLOGIC_TUMOR_STAGE) ~ as.character(NA),
+                           str_detect(AJCC_PATHOLOGIC_TUMOR_STAGE, "STAGE IV") ~ "STAGE III-IV",
+                           str_detect(AJCC_PATHOLOGIC_TUMOR_STAGE, "STAGE III") ~ "STAGE III-IV",
+                                      TRUE ~ "STAGE 0-II"))
+  
+
+rm(df.s, df.p)
+
+```
+
+## Transcriptomics data
+
+```{r transcriptomics}
+
+df.t <- 
+  read_tsv("../raw/data_mrna_seq_v2_rsem.txt") %>%
+  dplyr::select(-Hugo_Symbol) %>%
+  dplyr::select(Entrez_Gene_Id, all_of(df.meta$SAMPLE_ID)) %>%
+  distinct(Entrez_Gene_Id, .keep_all = TRUE)
+
+mat <- t(df.t[-1])
+colnames(mat) <- df.t$Entrez_Gene_Id
+rownames(mat) <- colnames(df.t)[-1]
+
+mat <- log2(mat + 1)
+
+features <- 
+  apply(mat, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+
+mat <- apply(mat, 2, function(x) (x - median(x))/mad(x))
+
+mat <- mat[, features]
+
+rm(df.t)
+
+```
+
+### Cox regression
+
+```{r survival, fig.width = 4, fig.height = 3}
+
+y <- Surv(df.meta$OS_MONTHS,
+          as.numeric(as.factor(df.meta$OS_STATUS)))
+x <- mat[!is.na(y), ]
+y <- y[!is.na(y)]
+
+fit <- glmnet(x, y, family = "cox")
+plot(fit)
+
+cvfit.1 <- cv.glmnet(x, y, family = "cox", type.measure = "C")
+plot(cvfit.1)
+
+cvfit.2 <- cv.glmnet(x, y, family = "cox", type.measure = "deviance")
+plot(cvfit.2)
+cvfit.2$lambda
+
+```
+
+```{r survival, fig.width = 4, fig.height = 3}
+
+# y <- Surv(df.meta$OS_MONTHS,
+#           as.numeric(as.factor(df.meta$OS_STATUS)))
+y <- Surv(df.meta$PFS_MONTHS,
+          as.numeric(as.factor(df.meta$PFS_STATUS)))
+y[df.meta$PFS_MONTHS == 0] <- NA
+x <- mat[!is.na(y), ]
+y <- y[!is.na(y)]
+
+# fit <- glmnet(x, y, family = "cox")
+# plot(fit)
+
+cvfit.1 <- cv.glmnet(x, y, family = "cox", type.measure = "C")
+plot(cvfit.1)
+
+cvfit.2 <- cv.glmnet(x, y, family = "cox", type.measure = "deviance")
+plot(cvfit.2)
+
+```
+
+```{r survival_features, fig.width = 4, fig.height = 3}
+features <- coef(cvfit.2, s = cvfit.2$lambda.min)
+features <- features[features[, 1] != 0, ]
+
+mat.surv <- mat[, names(features)]
+colnames(mat.surv) <- 
+  org.Hs.egSYMBOL %>%
+  mappedkeys() %>%
+  org.Hs.egSYMBOL[.] %>%
+  as.list() %>%
+  .[names(features)] %>%
+  unlist()
+
+smpl.dend <- 
+  dist(mat, method = "euclidian") %>%
+  hclust(method = "ward.D2") %>%
+  as.dendrogram()
+k.smpl <- 4
+smpl.dend <- color_branches(smpl.dend, k = k.smpl, col = color[1:k.smpl])
+
+Heatmap(t(mat.surv), 
+        show_row_names = T, show_column_names = F,
+        name = "Gene expression",
+        row_title = "Genes", column_title = "Samples",
+        cluster_columns = smpl.dend,
+        column_split = k.smpl)
+
+smpl.grp <- cutree(smpl.dend, k = k.smpl)
+smpl.grp <- case_when(smpl.grp == 1 ~ "S4",
+                 smpl.grp == 2 ~ "S1",
+                 smpl.grp == 3 ~ "S2",
+                 smpl.grp == 4 ~ "S3")
+df <- 
+  df.meta %>%
+  mutate(CLUSTER = as.factor(smpl.grp))
+
+fit <- survfit(Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, data = df)
+
+ggsurvplot(fit, data = df,
+           censor = FALSE,
+                 color = "CLUSTER",
+                 legend = "right", palette = "Set1",
+                 legend.title = "CLUSTER",
+                 title = "Overall Survival")
+```
+
