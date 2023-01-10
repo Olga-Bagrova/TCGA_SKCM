@@ -27,8 +27,8 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE,
 df.s <- read_tsv("../raw/data_clinical_sample.txt", skip = 4)
 df.p <- read_tsv("../raw/data_clinical_patient.txt", skip = 4)
 
-df.p <- select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_STAGING_EDITION, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
-df.s <- select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
+df.p <- dplyr::select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_PATHOLOGIC_TUMOR_STAGE, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
+df.s <- dplyr::select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
 
 duplicates <- df.s$PATIENT_ID[duplicated(df.s$PATIENT_ID)]
 
@@ -135,8 +135,8 @@ GO <-
 
 text_list = list(
     text1 = filter(GO, Cluster == "G1")$Description,
-    text2 = filter(GO, Cluster == "G2")$Description,
-    text3 = filter(GO, Cluster == "G3")$Description,
+    text2 = filter(GO, Cluster == "G2")$Description[1:5],
+    text3 = filter(GO, Cluster == "G3")$Description[1:2],
     text4 = "No enriched GO terms"
 )
 
@@ -150,6 +150,7 @@ rm(ck.bp, GO)
 smpl.ha <- HeatmapAnnotation(Survival = anno_block(gp = gpar(fill = color[1:k.smpl]),
                                                    labels = c("Higher survival", "Lower survival"),
                                                    labels_gp = gpar(col = "white", fontsize = 14)),
+                             #Stage = as.numeric(as.factor(df.meta$AJCC_PATHOLOGIC_TUMOR_STAGE)),
                              #Sex = df.meta$SEX,
                              #Age = df.meta$AGE,
                              #log10TMB = log10(df.meta$TMB_NONSYNONYMOUS
