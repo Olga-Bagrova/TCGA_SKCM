@@ -1,0 +1,220 @@
+---
+title: "Cox regression"
+author: "Шавронская Дарья Олеговна"
+date: "2023-01-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy = TRUE, tidy.opts = list(comment = FALSE))
+```
+
+```{r message=FALSE}
+library(dplyr)
+library(survival)
+library(data.table)
+library(survminer)
+library(tibble)
+library(readr)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(survminer)
+library(IDPmisc)
+
+```
+
+## PREPARE INITIAL DATA
+
+```{r}
+samples <- read.delim("data_clinical_sample.txt", skip = 4)
+patients <- read.delim("data_clinical_patient.txt", skip = 4)
+
+patients <- patients %>%
+  dplyr::select(PATIENT_ID, OS_STATUS, OS_MONTHS, DSS_STATUS, AGE, SEX)%>%
+  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
+  dplyr::select(!"DSS_STATUS")%>%
+  na.omit()%>%
+  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
+
+samples <- samples %>%
+  dplyr::select(PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE)
+```
+
+
+```{r}
+meta_clin <- inner_join(patients, samples, by = "PATIENT_ID") %>%
+  filter(SAMPLE_TYPE == "Metastasis") %>%
+  filter(SAMPLE_ID != "TCGA-GN-A269-01")
+
+clin <- inner_join(patients, samples, by = "PATIENT_ID")
+```
+
+
+```{r}
+transcriptomic <- read_tsv("data_mrna_seq_v2_rsem.txt", show_col_types = FALSE)
+transcriptomic <- transcriptomic %>%
+  dplyr::select(-Hugo_Symbol) %>%
+  distinct(transcriptomic$Entrez_Gene_Id, .keep_all = TRUE)
+
+colnames(transcriptomic)[1] <- "ENTREZID"
+
+```
+
+CHANGE ENTREZ ID TO OFFICIAL SYMBOLS
+
+```{r message=FALSE}
+annots <- select(org.Hs.eg.db, keys=as.character(transcriptomic$ENTREZID), columns=c("SYMBOL"), keytype="ENTREZID")
+
+annots$ENTREZID <- as.double(annots$ENTREZID)  
+
+RNA_symb <- inner_join(annots,transcriptomic, by = "ENTREZID")
+
+RNA_symb <- RNA_symb %>%
+  dplyr::select(!"ENTREZID")
+  
+
+```
+
+```{r}
+RNA <- transpose(RNA_symb[-1])
+
+colnames(RNA) <- RNA_symb$SYMBOL
+
+rownames(RNA) <- colnames(RNA_symb)[-1]
+
+RNA <- log2(RNA[-1] + 1)
+
+RNA <- apply(RNA, 2, function(x) (x - median(x))/mad(x))
+
+RNA <- as.data.frame(RNA)
+
+RNA <- rownames_to_column(RNA, "SAMPLE_ID")
+
+RNA_meta <- inner_join(meta_clin,RNA, by = "SAMPLE_ID")
+
+RNA_clin <- inner_join(clin, RNA, by = "SAMPLE_ID")
+```
+
+
+###UNIVARIATE ANALYSIS OF OS
+
+* SUCO - 51430 
+* BTN3A1 - 11119
+* TBC1D2 - 55357
+* GZMB - 3002
+* C1QA - 712
+* C1QB - 713
+* LINC02908 - C9orf139 - 401563
+* MIR3667HG - C22orf34 - 348645
+* CCL4 - 6351
+* CXCL10 - 3627
+* CCL5 - 6352
+
+not founded
+
+* MIR17 - hsa-miR-17-5p - 406952
+* HLA-DQB1-AS1 - 106480429
+
+```{r}
+covariates <- c("SUCO", "BTN3A1", "TBC1D2", "GZMB", "C1QA", "C1QB", "LINC02908", "MIR3667HG", "CCL4", "CXCL10", "CCL5")
+univ_formulas1 <- sapply(covariates,
+                        function(x) as.formula(paste('Surv(OS_MONTHS,OS_STATUS)~', x)))
+                        
+univ_models1 <- lapply(univ_formulas1, function(x){coxph(x, data = RNA_meta)})
+univ_results1 <- lapply(univ_models1,
+                       function(x){ 
+                          x <- summary(x)
+                          p.value<-signif(x$wald["pvalue"], digits=4)
+                          wald.test<-signif(x$wald["test"], digits=4)
+                          beta<-signif(x$coef[1], digits=4)
+                          HR <-signif(x$coef[2], digits=4)
+                          HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                          HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                          res<-c(beta, HR, HR.confint.lower, HR.confint.upper, wald.test, p.value)
+                          
+                          names(res)<-c("B values", "HR", "lower", "upper","wald.test", 
+                                        "p.value")
+                          return(res)
+                         })
+res1 <- t(as.data.frame(univ_results1, check.names = FALSE))
+df <- as.data.frame(res1)
+df <- rownames_to_column(df, "MS")
+```
+
+```{r}
+covariates <- c("SUCO", "BTN3A1", "TBC1D2", "GZMB", "C1QA", "C1QB", "LINC02908", "MIR3667HG", "CCL4", "CXCL10", "CCL5")
+univ_formulas <- sapply(covariates,
+                        function(x) as.formula(paste('Surv(OS_MONTHS,OS_STATUS)~', x)))
+                        
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = RNA_meta)})
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                          x <- summary(x)
+                          p.value<-signif(x$wald["pvalue"], digits=4)
+                          wald.test<-signif(x$wald["test"], digits=4)
+                          beta<-signif(x$coef[1], digits=4)
+                          HR <-signif(x$coef[2], digits=4)
+                          HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                          HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                          HR <- paste0(HR, " (", HR.confint.lower, "-", HR.confint.upper, ")")
+                          res<-c(beta, HR, wald.test, p.value)
+                          
+                          names(res)<-c("B values", "HR (95% CI)","wald.test", 
+                                        "p.value")
+                          return(res)
+                         })
+
+res2 <- t(as.data.frame(univ_results, check.names = FALSE))
+table <- as.data.frame(res2)
+table <- rownames_to_column(table, "MS")
+table
+
+```
+
+
+```{r}
+ggplot(data=df, aes(y=MS, x=HR, xmin=lower, xmax=upper)) +
+  geom_point() + 
+  geom_errorbarh(height=.1) +
+  geom_vline(xintercept=1, color='black', linetype='dashed', alpha=.5) +
+  labs(x='HR', y = 'Molecular signatures') +
+  theme_minimal()
+```
+
+
+```{r}
+survplotdata <- RNA_meta[,c("OS_MONTHS", "OS_STATUS", "SUCO", "BTN3A1", "TBC1D2", "GZMB", "C1QA", "C1QB", "LINC02908", "MIR3667HG", "CCL4", "CXCL10", "CCL5")] 
+head(survplotdata)
+```
+
+
+```{r}
+Expr <- 1
+for (x in c("SUCO", "BTN3A1", "TBC1D2", "GZMB", "C1QA", "C1QB", "LINC02908", "MIR3667HG", "CCL4", "CXCL10", "CCL5"))
+{
+  survplotdata[[x]] <- ifelse(survplotdata[[x]] >= Expr, 'High', 'Low')
+  survplotdata[[x]] <- factor(survplotdata[[x]],
+    levels = c('Low', 'High'))
+}
+
+
+for (x in c("SUCO", "BTN3A1", "TBC1D2", "GZMB", "C1QA", "C1QB", "LINC02908", "MIR3667HG", "CCL4", "CXCL10", "CCL5"))
+{
+plot <- ggsurvplot(survfit(Surv(OS_MONTHS, OS_STATUS) ~ survplotdata[[x]], 
+          data = survplotdata), 
+          data = survplotdata, 
+          break.time.by = 100,
+          pval = TRUE, 
+          legend.labs = c("Low", "High"), 
+          ggtheme = theme_minimal(),
+          xlim = c(0,350), 
+          conf.int = TRUE, 
+          risk.table = TRUE, 
+          legend.title = x)
+print(plot)
+}
+
+
+```
+
+
