@@ -1,3 +1,0 @@
-https://bookdown.org/staedler_n/highdimstats/survival-analysis.html
-
-https://www.r-bloggers.com/2020/03/a-deep-dive-into-glmnet-predict-glmnet/
