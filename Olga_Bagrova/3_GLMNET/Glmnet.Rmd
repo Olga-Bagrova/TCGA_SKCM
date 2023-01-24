@@ -2,7 +2,9 @@
 title: "Glmnet"
 author: "Багрова Ольга"
 date: '2023-01-16'
-output: html_document
+output:
+  html_document:
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
