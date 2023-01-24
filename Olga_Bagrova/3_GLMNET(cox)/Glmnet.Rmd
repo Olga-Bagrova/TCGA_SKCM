@@ -1,17 +1,19 @@
 ---
-title: "ИО2: Glmnet"
+title: "Glmnet"
 author: "Багрова Ольга"
-date: '2022-12-28'
-output:
-  html_document:
-    keep_md: true
+date: '2023-01-16'
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
 
-```{r}
+```{r include=FALSE}
 library(tidyverse)
 library(gtsummary)
 library(ggplot2)
@@ -25,19 +27,25 @@ library(glmnet)
 ```
 
 
-#*OS-DDS*
+#1. OS-DSS/OS/DSS
 
-##Data-preprocessing
+##1.1 OS-DSS
+
+Параметры:
+OS-DSS, median/mad, mad, альфа=1
+
+
+###Data-preprocessing
 
 
 Данные пациентов:
 
-```{r message=FALSE, warning=FALSE}
+```{r message=FALSE, warning=FALSE, include=FALSE}
 patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
 patients <- patients %>%
-  select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
+  dplyr::select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
   filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
-  select(!"DSS_STATUS")%>%
+  dplyr::select(!"DSS_STATUS")%>%
   na.omit()%>%
   mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
 colnames(patients) <- c("ID", "status", "time")
@@ -46,14 +54,14 @@ colnames(patients) <- c("ID", "status", "time")
 
 Данные образцов:
 
-```{r}
+```{r echo=TRUE}
 samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
 samples <- samples %>%
-  select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
+  dplyr::select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
 
 Msamp <- samples %>%
   filter(`SAMPLE_TYPE` == "Metastasis") %>%
-  select(!"SAMPLE_TYPE")#367
+  dplyr::select(!"SAMPLE_TYPE")#367
 colnames(Msamp) <- c("ID", "SampID")
 #проверка дубликатов среди пациентов
 if(length(unique(Msamp$ID)) != nrow(Msamp)){
@@ -66,7 +74,7 @@ if(length(unique(Msamp$ID)) != nrow(Msamp)){
 
 ```{r}
 Msamp <- inner_join(Msamp, patients, by = "ID") %>%
-  select(!"ID")
+  dplyr::select(!"ID")
 ```
 
 
@@ -75,7 +83,7 @@ Msamp <- inner_join(Msamp, patients, by = "ID") %>%
 ```{r}
 mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
 mRNA <- mRNA_raw %>%
-  select(!Hugo_Symbol)
+  dplyr::select(!Hugo_Symbol)
 mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
 
 #транспонирование
@@ -84,11 +92,11 @@ mRNA <- t(mRNA) %>%
 colnames(mRNA) <- mRNA[1,]
 mRNA$SampID <- row.names(mRNA)
 mRNA <- mRNA[-1,] %>%
-  select(SampID, everything())
+  dplyr::select(SampID, everything())
 
 #оставляем только нужные образцы (метастазы)
 MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
-  select(!c("status", "time"))
+  dplyr::select(!c("status", "time"))
 ```
 
 ```{r include=FALSE}
@@ -103,9 +111,9 @@ samples <- NULL
 
 ```{r}
 MmRNA_num <- MmRNA %>%
-  select(where(is.numeric))%>%
-  select(function(x) sum(x) != 0)%>%
-  select(function(x) mad(x) != 0)
+  dplyr::select(where(is.numeric))%>%
+  dplyr::select(function(x) sum(x) != 0)%>%
+  dplyr::select(function(x) mad(x) != 0)
 MmRNA_transf <- log2(MmRNA_num + 1)
 MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - median(x))/mad(x))
 
@@ -117,7 +125,7 @@ genes <-
 MmRNA_res <- MmRNA_transf[, genes]
 
 Msurv_res <- Msamp %>%
-  select(!`SampID`)
+  dplyr::select(!`SampID`)
 ```
 
 
@@ -133,22 +141,12 @@ Msamp <- NULL
 
 
 
-##Glmnet
+###Glmnet
 
 ```{r}
 y<-Msurv_res
 x<-MmRNA_res
 ```
-
-
-Исходно Каплан-Мейер: 
-
-```{r}
-fit.surv <- survfit(Surv(time, status) ~ 1, 
-                    data = y)
-ggsurvplot(fit.surv,conf.int=TRUE)
-```
-
 
 
 
@@ -179,7 +177,7 @@ xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
 ```{r}
 set.seed(89)
 ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=1)#LASSO
 plot(fit.coxnet,xvar="lambda")
 ```
 
@@ -191,14 +189,14 @@ cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
                        family="cox",
                        type.measure="C",
                        nfolds = 5,
-                       alpha=0.95)
+                       alpha=1)
 plot(cv.coxnet)
 cv.coxnet
 ```
 
 
 
-График ненулевых коэффициентов (1se):
+График ненулевых коэффициентов:
 
 ```{r}
 dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
@@ -218,22 +216,6 @@ dbeta%>%
 4948 - OCA2 OCA2 melanosomal transmembrane protein
 
 
-
-Предсказание коэффициентов $x^{T}\beta$ (>0 <-> poor):
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.1se,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-
 Предсказание относительного риска по Коксу (>1 <-> poor):
 
 ```{r}
@@ -249,515 +231,12 @@ ggsurvplot(survfit(Surv(time, status) ~ prognosis,
 ```
 
 
+##1.2 OS
 
+Параметры:
+OS, median/mad, mad, альфа=1
 
-```{r eval=FALSE, include=FALSE}
-#График ненулевых коэффициентов (min)
-dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.min)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  dplyr::filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-```{r eval=FALSE, include=FALSE}
-#Предсказания xTbeta (деление на poor/good ><0) (min)
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-```{r eval=FALSE, include=FALSE}
-#Предсказания hazards (деление на poor/good ><1) min
-hazard <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="response")
-Res_haz<-ytest
-Res_haz$hazard <- hazard
-Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_haz),conf.int = TRUE)
-```
-
---------------
-
-#*Primary*
-
-##Data-preprocessing
-
-
-Данные пациентов:
-
-```{r message=FALSE, warning=FALSE}
-patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
-patients <- patients %>%
-  select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
-  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
-  select(!"DSS_STATUS")%>%
-  na.omit()%>%
-  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
-colnames(patients) <- c("ID", "status", "time")
-```
-
-
-Данные образцов:
-
-```{r}
-samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
-samples <- samples %>%
-  select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
-
-Msamp <- samples %>%
-  filter(`SAMPLE_TYPE` == "Primary") %>%
-  select(!"SAMPLE_TYPE")#367
-colnames(Msamp) <- c("ID", "SampID")
-#проверка дубликатов среди пациентов
-if(length(unique(Msamp$ID)) != nrow(Msamp)){
-   print("Есть дубликаты среди пациентов")
-   }
-```
-
-
-Оставляем пациентов с первичными опухолями:
-
-```{r}
-Msamp <- inner_join(Msamp, patients, by = "ID") %>%
-  select(!"ID")
-```
-
-
-Данные mRNA:
-
-```{r}
-mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
-mRNA <- mRNA_raw %>%
-  select(!Hugo_Symbol)
-mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
-
-#транспонирование
-mRNA <- t(mRNA) %>%
-  as.data.frame()
-colnames(mRNA) <- mRNA[1,]
-mRNA$SampID <- row.names(mRNA)
-mRNA <- mRNA[-1,] %>%
-  select(SampID, everything())
-
-#оставляем только нужные образцы (первичные)
-MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
-  select(!c("status", "time"))
-Msamp <- inner_join(mRNA, Msamp, by = "SampID")%>%
-  select(c("SampID", "status", "time"))
-```
-
-```{r include=FALSE}
-mRNA <- NULL
-mRNA_raw <- NULL
-patients <- NULL
-samples <- NULL
-```
-
-
-Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
-
-```{r}
-MmRNA_num <- MmRNA %>%
-  select(where(is.numeric))%>%
-  select(function(x) sum(x) != 0)%>%
-  select(function(x) mad(x) != 0)
-MmRNA_transf <- log2(MmRNA_num + 1)
-MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - median(x))/mad(x))
-
-genes <- 
-  apply(MmRNA_transf, 2, mad) %>%
-  sort(decreasing = T) %>%
-  .[1:1500] %>%
-  names()
-MmRNA_res <- MmRNA_transf[, genes]
-
-Msurv_res <- Msamp %>%
-  select(!`SampID`)
-```
-
-
-
-```{r include=FALSE}
-MmRNA <- NULL
-MmRNA_transf <- NULL
-MmRNA_num <- NULL
-MmRNA_scaled <- NULL
-Msamp <- NULL
-```
-
-
-
-
-##Glmnet
-
-```{r}
-y<-Msurv_res %>%
-  filter(time > 0)
-x<-MmRNA_res
-```
-
-
-Исходно Каплан-Мейер: 
-
-```{r}
-fit.surv <- survfit(Surv(time, status) ~ 1, 
-                    data = y)
-ggsurvplot(fit.surv,conf.int=TRUE)
-```
-
-
-
-
-Тест и трейн сплит (10:90)
-```{r}
-set.seed(114)
-
-indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.9))
-indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)#существуют только в первом векторе
-
-xtrain_ns <- x[indexes_tr,]
-ytrain <- y[indexes_tr,]
-xtest_ns <- x[indexes_te,]
-ytest <- y[indexes_te,]
-```
-
-
-скейлим x отдельно для тест и трейн
-
-```{r}
-xtrain <- apply(xtrain_ns, 2, function(x) (x - median(x))/mad(x))
-xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
-```
-
-
-Что происходит с коэффициентами по мере роста штрафа:
-
-```{r}
-set.seed(89)
-ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
-plot(fit.coxnet,xvar="lambda")
-```
-
-
-Выбор лямбды (штрафа) с помощью кросс-валидации:
-
-```{r}
-cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
-                       family="cox",
-                       type.measure="C",
-                       nfolds = 5,
-                       alpha=0.95)
-plot(cv.coxnet)
-cv.coxnet
-```
-
-
-
-График ненулевых коэффициентов (1se):
-
-```{r}
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-1496 - CTNNA2 catenin alpha 2 
-5457 - POU4F1 POU class 4 homeobox 1
-54550 - NECAB2 N-terminal EF-hand calcium binding protein 2
-
-
-
-Предсказание коэффициентов $x^{T}\beta$ (>0 <-> poor):
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.1se,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-
-Предсказание относительного риска по Коксу (>1 <-> poor):
-
-```{r}
-hazard <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.1se,
-              type="response")
-Res_haz<-ytest
-Res_haz$hazard <- hazard
-Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_haz),conf.int = TRUE)
-```
-
-
-
-
----------------
-#*дожили до 10 лет (120 месяцев)*
-
-##Data-preprocessing
-
-
-Данные пациентов:
-
-```{r message=FALSE, warning=FALSE}
-patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
-patients <- patients %>%
-  select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
-  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
-  select(!"DSS_STATUS")%>%
-  na.omit()%>%
-  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
-colnames(patients) <- c("ID", "status", "time")
-patients <- patients %>%
-  filter(time <= 120)
-
-```
-
-
-Данные образцов:
-
-```{r}
-samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
-samples <- samples %>%
-  select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
-
-Msamp <- samples %>%
-  filter(`SAMPLE_TYPE` == "Metastasis") %>%
-  select(!"SAMPLE_TYPE")#367
-colnames(Msamp) <- c("ID", "SampID")
-#проверка дубликатов среди пациентов
-if(length(unique(Msamp$ID)) != nrow(Msamp)){
-   print("Есть дубликаты среди пациентов")
-   }
-```
-
-
-Оставляем пациентов с метастазами:
-
-```{r}
-Msamp <- inner_join(Msamp, patients, by = "ID") %>%
-  select(!"ID")
-```
-
-
-Данные mRNA:
-
-```{r}
-mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
-mRNA <- mRNA_raw %>%
-  select(!Hugo_Symbol)
-mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
-
-#транспонирование
-mRNA <- t(mRNA) %>%
-  as.data.frame()
-colnames(mRNA) <- mRNA[1,]
-mRNA$SampID <- row.names(mRNA)
-mRNA <- mRNA[-1,] %>%
-  select(SampID, everything())
-
-#оставляем только нужные образцы (метастазы)
-MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
-  select(!c("status", "time"))
-```
-
-```{r include=FALSE}
-mRNA <- NULL
-mRNA_raw <- NULL
-patients <- NULL
-samples <- NULL
-```
-
-
-Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
-
-```{r}
-MmRNA_num <- MmRNA %>%
-  select(where(is.numeric))%>%
-  select(function(x) sum(x) != 0)%>%
-  select(function(x) mad(x) != 0)
-MmRNA_transf <- log2(MmRNA_num + 1)
-MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - median(x))/mad(x))
-
-genes <- 
-  apply(MmRNA_transf, 2, mad) %>%
-  sort(decreasing = T) %>%
-  .[1:1500] %>%
-  names()
-MmRNA_res <- MmRNA_transf[, genes]
-
-Msurv_res <- Msamp %>%
-  select(!`SampID`)
-```
-
-
-
-```{r include=FALSE}
-MmRNA <- NULL
-MmRNA_transf <- NULL
-MmRNA_num <- NULL
-MmRNA_scaled <- NULL
-Msamp <- NULL
-```
-
-
-
-
-##Glmnet
-
-```{r}
-y<-Msurv_res
-x<-MmRNA_res
-```
-
-
-Исходно Каплан-Мейер: 
-
-```{r}
-fit.surv <- survfit(Surv(time, status) ~ 1, 
-                    data = y)
-ggsurvplot(fit.surv,conf.int=FALSE)
-```
-
-
-
-
-Тест и трейн сплит (20:80)
-```{r}
-set.seed(114)
-
-indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
-indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)#существуют только в первом векторе
-
-xtrain_ns <- x[indexes_tr,]
-ytrain <- y[indexes_tr,]
-xtest_ns <- x[indexes_te,]
-ytest <- y[indexes_te,]
-```
-
-
-скейлим x отдельно для тест и трейн
-
-```{r}
-xtrain <- apply(xtrain_ns, 2, function(x) (x - median(x))/mad(x))
-xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
-```
-
-
-Что происходит с коэффициентами по мере роста штрафа:
-
-```{r}
-set.seed(89)
-ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
-plot(fit.coxnet,xvar="lambda")
-```
-
-
-Выбор лямбды (штрафа) с помощью кросс-валидации:
-
-```{r}
-cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
-                       family="cox",
-                       type.measure="C",
-                       nfolds = 5,
-                       alpha=0.95)
-plot(cv.coxnet)
-cv.coxnet
-```
-
-
-
-График ненулевых коэффициентов (1se):
-
-```{r}
-dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  dplyr::filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-3824 - KLRD1 killer cell lectin like receptor D1
-115361 - GBP4 guanylate binding protein 4
-4948 - OCA2 OCA2 melanosomal transmembrane protein
-
-
-
-Предсказание коэффициентов $x^{T}\beta$ (>0 <-> poor):
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.1se,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-
-Предсказание относительного риска по Коксу (>1 <-> poor):
-
-```{r}
-hazard <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.1se,
-              type="response")
-Res_haz<-ytest
-Res_haz$hazard <- hazard
-Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_haz),conf.int = TRUE)
-```
-
-
-
--------------
-
-#*log-mad*
-
-##Data-preprocessing
+###Data-preprocessing
 
 
 Данные пациентов:
@@ -861,23 +340,12 @@ Msamp <- NULL
 
 
 
-##Glmnet
+###Glmnet
 
 ```{r}
 y<-Msurv_res
 x<-MmRNA_res
 ```
-
-
-Исходно Каплан-Мейер: 
-
-```{r}
-fit.surv <- survfit(Surv(time, status) ~ 1, 
-                    data = y)
-ggsurvplot(fit.surv,conf.int=FALSE)
-```
-
-
 
 
 Тест и трейн сплит (20:80)
@@ -907,7 +375,7 @@ xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
 ```{r}
 set.seed(89)
 ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=1)
 plot(fit.coxnet,xvar="lambda")
 ```
 
@@ -919,22 +387,10 @@ cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
                        family="cox",
                        type.measure="C",
                        nfolds = 5,
-                       alpha=0.95)
+                       alpha=1)
 plot(cv.coxnet)
 cv.coxnet
 ```
-
-```{r eval=FALSE, include=FALSE}
-cv.coxnet_d <- cv.glmnet(xtrain,ytrain.surv,
-                       family="cox",
-                       type.measure="deviance",
-                       nfolds = 5,
-                       alpha=0.95)
-plot(cv.coxnet_d)
-cv.coxnet_d
-```
-
-Only deviance, C available as type.measure for Cox models
 
 
 График ненулевых коэффициентов (1se)
@@ -953,48 +409,6 @@ dbeta%>%
         text = element_text(size = 15))
 ```
 
-
-График ненулевых коэффициентов (min)
-
-```{r}
-dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.min)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  dplyr::filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-Предсказания $x^{T}\beta$ (деление на poor/good ><0) :
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
 
 
 Предсказания hazards (деление на poor/good ><1):
@@ -1002,7 +416,7 @@ ggsurvplot(survfit(Surv(time, status) ~ prognosis,
 ```{r}
 hazard <- predict(fit.coxnet,
               newx=xtest,
-              s=cv.coxnet$lambda.min,
+              s=cv.coxnet$lambda.1se,
               type="response")
 Res_haz<-ytest
 Res_haz$hazard <- hazard
@@ -1011,231 +425,12 @@ ggsurvplot(survfit(Surv(time, status) ~ prognosis,
                     data = Res_haz),conf.int = TRUE)
 ```
 
-------------
-#*log-scale*
 
+##1.3 DSS
+Параметры:
+DSS, median/mad, mad, альфа=1
 
-##Data-preprocessing
-
-
-Данные пациентов:
-
-```{r message=FALSE, warning=FALSE}
-patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
-patients <- patients %>%
-  select("PATIENT_ID", "OS_STATUS", "OS_MONTHS")%>%
-  na.omit()%>%
-  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
-colnames(patients) <- c("ID", "status", "time")
-```
-
-
-Данные образцов:
-
-```{r}
-samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
-samples <- samples %>%
-  select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
-
-Msamp <- samples %>%
-  filter(`SAMPLE_TYPE` == "Metastasis") %>%
-  select(!"SAMPLE_TYPE")#367
-colnames(Msamp) <- c("ID", "SampID")
-#проверка дубликатов среди пациентов
-if(length(unique(Msamp$ID)) != nrow(Msamp)){
-   print("Есть дубликаты среди пациентов")
-   }
-```
-
-
-Оставляем пациентов с метастазами:
-
-```{r}
-Msamp <- inner_join(Msamp, patients, by = "ID") %>%
-  select(!"ID")
-```
-
-
-Данные mRNA:
-
-```{r}
-mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
-mRNA <- mRNA_raw %>%
-  select(!Hugo_Symbol)
-mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
-
-#транспонирование
-mRNA <- t(mRNA) %>%
-  as.data.frame()
-colnames(mRNA) <- mRNA[1,]
-mRNA$SampID <- row.names(mRNA)
-mRNA <- mRNA[-1,] %>%
-  select(SampID, everything())
-
-#оставляем только нужные образцы (метастазы)
-MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
-  select(!c("status", "time"))
-```
-
-```{r include=FALSE}
-mRNA <- NULL
-mRNA_raw <- NULL
-patients <- NULL
-samples <- NULL
-```
-
-
-Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
-
-```{r}
-MmRNA_num <- MmRNA %>%
-  select(where(is.numeric))%>%
-  select(function(x) sum(x) != 0)%>%
-  select(function(x) sd(x) != 0)
-MmRNA_transf <- log2(MmRNA_num + 1)
-MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - mean(x))/sd(x))
-
-genes <- 
-  apply(MmRNA_transf, 2, mad) %>%
-  sort(decreasing = T) %>%
-  .[1:1500] %>%
-  names()
-MmRNA_res <- MmRNA_transf[, genes]
-
-Msurv_res <- Msamp %>%
-  select(!`SampID`)
-```
-
-
-
-```{r include=FALSE}
-MmRNA <- NULL
-MmRNA_transf <- NULL
-MmRNA_num <- NULL
-MmRNA_scaled <- NULL
-Msamp <- NULL
-```
-
-
-
-##Glmnet
-
-```{r}
-y<-Msurv_res
-x<-MmRNA_res
-```
-
-
-Тест и трейн сплит (20:80)
-```{r}
-set.seed(114)
-
-indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
-indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)#существуют только в первом векторе
-
-xtrain_ns <- x[indexes_tr,]
-ytrain <- y[indexes_tr,]
-xtest_ns <- x[indexes_te,]
-ytest <- y[indexes_te,]
-```
-
-
-скейлим x отдельно для тест и трейн
-
-```{r}
-xtrain <- apply(xtrain_ns, 2, function(x) (x - mean(x))/sd(x))
-xtest <- apply(xtest_ns, 2, function(x) (x - mean(x))/sd(x))
-```
-
-
-Что происходит с коэффициентами по мере роста штрафа:
-
-```{r}
-set.seed(89)
-ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
-plot(fit.coxnet,xvar="lambda")
-```
-
-
-Выбор лямбды (штрафа) с помощью кросс-валидации:
-
-```{r}
-cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
-                       family="cox",
-                       type.measure="C",
-                       nfolds = 5,
-                       alpha=0.95)
-plot(cv.coxnet)
-cv.coxnet
-```
-
-```{r eval=FALSE, include=FALSE}
-cv.coxnet_d <- cv.glmnet(xtrain,ytrain.surv,
-                       family="cox",
-                       type.measure="deviance",
-                       nfolds = 5,
-                       alpha=0.95)
-plot(cv.coxnet_d)
-cv.coxnet_d
-```
-
-Only deviance, C available as type.measure for Cox models
-
-
-График ненулевых коэффициентов (1se)
-
-```{r}
-dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  dplyr::filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-
-График ненулевых коэффициентов (min)
-
-```{r}
-dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.min)))
-dbeta$betaname <- colnames(x)
-dbeta%>%
-  dplyr::filter(betahat!=0)%>%
-  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
-  geom_bar(stat="identity",width=0.5)+
-  xlab("gene")+ylab("abs(betahat)")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
-        text = element_text(size = 15))
-```
-
-Предсказания (деление на poor/good в зависимости от :
-
-```{r}
-lp <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="link")
-dat.test <- data.frame(ytest)
-dat.test$prognosis <- ifelse(lp>0,"poor","good")
-fit.surv <- survfit(Surv(time, status) ~ prognosis, 
-                    data = dat.test)
-ggsurvplot(fit.surv,conf.int = TRUE)
-```
-
-------------------
-
-
-#*DSS*
-
-##Data-preprocessing
+###Data-preprocessing
 
 
 Данные пациентов:
@@ -1259,7 +454,7 @@ samples <- samples %>%
 
 Msamp <- samples %>%
   filter(`SAMPLE_TYPE` == "Metastasis") %>%
-  select(!"SAMPLE_TYPE")#367
+  select(!"SAMPLE_TYPE")
 colnames(Msamp) <- c("ID", "SampID")
 #проверка дубликатов среди пациентов
 if(length(unique(Msamp$ID)) != nrow(Msamp)){
@@ -1339,22 +534,12 @@ Msamp <- NULL
 
 
 
-##Glmnet
+###Glmnet
 
 ```{r}
 y<-Msurv_res
 x<-MmRNA_res
 ```
-
-
-Исходно Каплан-Мейер: 
-
-```{r}
-fit.surv <- survfit(Surv(time, status) ~ 1, 
-                    data = y)
-ggsurvplot(fit.surv,conf.int=FALSE)
-```
-
 
 
 
@@ -1363,7 +548,7 @@ ggsurvplot(fit.surv,conf.int=FALSE)
 set.seed(114)
 
 indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
-indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)#существуют только в первом векторе
+indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)
 
 xtrain_ns <- x[indexes_tr,]
 ytrain <- y[indexes_tr,]
@@ -1385,7 +570,7 @@ xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
 ```{r}
 set.seed(89)
 ytrain.surv <- Surv(ytrain$time,ytrain$status)
-fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.95)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=1)
 plot(fit.coxnet,xvar="lambda")
 ```
 
@@ -1397,18 +582,18 @@ cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
                        family="cox",
                        type.measure="C",
                        nfolds = 5,
-                       alpha=0.95)
+                       alpha=1)
 plot(cv.coxnet)
 cv.coxnet
 ```
 
 
 
-График ненулевых коэффициентов (min)
+График ненулевых коэффициентов
 
 ```{r}
 dbeta <- data.frame()
-dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.min)))
+dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
 dbeta$betaname <- colnames(x)
 dbeta%>%
   dplyr::filter(betahat!=0)%>%
@@ -1419,22 +604,6 @@ dbeta%>%
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
         text = element_text(size = 15))
 ```
-
-Предсказания $x^{T}\beta$ (деление на poor/good ><0) :
-
-```{r}
-lin_coef <- predict(fit.coxnet,
-              newx=xtest,
-              s=cv.coxnet$lambda.min,
-              type="link")
-Res_lc<-ytest
-Res_lc$lin_coef <- lin_coef
-Res_lc$prognosis <- ifelse(lin_coef>0,"poor","good")
-ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
-                    data = Res_lc),conf.int = TRUE)
-```
-
-
 
 Предсказания hazards (деление на poor/good ><1):
 
@@ -1450,3 +619,631 @@ ggsurvplot(survfit(Surv(time, status) ~ prognosis,
                     data = Res_haz),conf.int = TRUE)
 ```
 
+
+#2. альфа= 1/0,5
+
+##2.1 альфа=1 (ЛАССО)
+
+Параметры:
+OS-DSS, median/mad, mad, альфа=1
+
+см OS-DSS
+
+
+##2.2 альфа=0.5 (ЛАССО+Ридж? т.е. Elastic net)
+
+
+Параметры:
+OS-DSS, median/mad, mad, альфа=0.5
+
+
+###Data-preprocessing
+
+
+Данные пациентов:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
+patients <- patients %>%
+  dplyr::select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
+  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
+  dplyr::select(!"DSS_STATUS")%>%
+  na.omit()%>%
+  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
+colnames(patients) <- c("ID", "status", "time")
+```
+
+
+Данные образцов:
+
+```{r echo=TRUE}
+samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
+samples <- samples %>%
+  dplyr::select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
+
+Msamp <- samples %>%
+  filter(`SAMPLE_TYPE` == "Metastasis") %>%
+  dplyr::select(!"SAMPLE_TYPE")#367
+colnames(Msamp) <- c("ID", "SampID")
+#проверка дубликатов среди пациентов
+if(length(unique(Msamp$ID)) != nrow(Msamp)){
+   print("Есть дубликаты среди пациентов")
+   }
+```
+
+
+Оставляем пациентов с метастазами:
+
+```{r}
+Msamp <- inner_join(Msamp, patients, by = "ID") %>%
+  dplyr::select(!"ID")
+```
+
+
+Данные mRNA:
+
+```{r}
+mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
+mRNA <- mRNA_raw %>%
+  dplyr::select(!Hugo_Symbol)
+mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
+
+#транспонирование
+mRNA <- t(mRNA) %>%
+  as.data.frame()
+colnames(mRNA) <- mRNA[1,]
+mRNA$SampID <- row.names(mRNA)
+mRNA <- mRNA[-1,] %>%
+  dplyr::select(SampID, everything())
+
+#оставляем только нужные образцы (метастазы)
+MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
+  dplyr::select(!c("status", "time"))
+```
+
+```{r include=FALSE}
+mRNA <- NULL
+mRNA_raw <- NULL
+patients <- NULL
+samples <- NULL
+```
+
+
+Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
+
+```{r}
+MmRNA_num <- MmRNA %>%
+  dplyr::select(where(is.numeric))%>%
+  dplyr::select(function(x) sum(x) != 0)%>%
+  dplyr::select(function(x) mad(x) != 0)
+MmRNA_transf <- log2(MmRNA_num + 1)
+MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - median(x))/mad(x))
+
+genes <- 
+  apply(MmRNA_transf, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+MmRNA_res <- MmRNA_transf[, genes]
+
+Msurv_res <- Msamp %>%
+  dplyr::select(!`SampID`)
+```
+
+
+
+```{r include=FALSE}
+MmRNA <- NULL
+MmRNA_transf <- NULL
+MmRNA_num <- NULL
+MmRNA_scaled <- NULL
+Msamp <- NULL
+```
+
+
+
+
+###Glmnet
+
+```{r}
+y<-Msurv_res
+x<-MmRNA_res
+```
+
+
+
+Тест и трейн сплит (20:80)
+```{r}
+set.seed(114)
+
+indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
+indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)
+
+xtrain_ns <- x[indexes_tr,]
+ytrain <- y[indexes_tr,]
+xtest_ns <- x[indexes_te,]
+ytest <- y[indexes_te,]
+```
+
+
+скейлим x отдельно для тест и трейн
+
+```{r}
+xtrain <- apply(xtrain_ns, 2, function(x) (x - median(x))/mad(x))
+xtest <- apply(xtest_ns, 2, function(x) (x - median(x))/mad(x))
+```
+
+
+Что происходит с коэффициентами по мере роста штрафа:
+
+```{r}
+set.seed(89)
+ytrain.surv <- Surv(ytrain$time,ytrain$status)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=0.5)
+plot(fit.coxnet,xvar="lambda")
+```
+
+
+Выбор лямбды (штрафа) с помощью кросс-валидации:
+
+```{r}
+cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
+                       family="cox",
+                       type.measure="C",
+                       nfolds = 5,
+                       alpha=0.5)
+plot(cv.coxnet)
+cv.coxnet
+```
+
+
+
+График ненулевых коэффициентов:
+
+```{r}
+dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
+dbeta$betaname <- colnames(x)
+dbeta%>%
+  filter(betahat!=0)%>%
+  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
+  geom_bar(stat="identity",width=0.5)+
+  xlab("gene")+ylab("abs(betahat)")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
+        text = element_text(size = 15))
+```
+
+3824 - KLRD1 killer cell lectin like receptor D1
+115361 - GBP4 guanylate binding protein 4
+4948 - OCA2 OCA2 melanosomal transmembrane protein
+400759 - 
+
+
+Предсказание относительного риска по Коксу (>1 <-> poor):
+
+```{r}
+hazard <- predict(fit.coxnet,
+              newx=xtest,
+              s=cv.coxnet$lambda.1se,
+              type="response")
+Res_haz<-ytest
+Res_haz$hazard <- hazard
+Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
+ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
+                    data = Res_haz),conf.int = TRUE)
+```
+
+
+#3. median-mad (mad)/mean-sd (sd)/mean-sd (mad)
+
+##3.1 median-mad (mad)
+
+Параметры:
+OS-DSS, median/mad, mad, альфа=1
+
+см OS-DSS
+
+
+##3.2 mean-sd (sd)
+
+Параметры:
+OS-DSS, mean/sd, sd, альфа=1
+
+
+###Data-preprocessing
+
+
+Данные пациентов:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
+patients <- patients %>%
+  dplyr::select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
+  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
+  dplyr::select(!"DSS_STATUS")%>%
+  na.omit()%>%
+  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
+colnames(patients) <- c("ID", "status", "time")
+```
+
+
+Данные образцов:
+
+```{r echo=TRUE}
+samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
+samples <- samples %>%
+  dplyr::select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
+
+Msamp <- samples %>%
+  filter(`SAMPLE_TYPE` == "Metastasis") %>%
+  dplyr::select(!"SAMPLE_TYPE")#367
+colnames(Msamp) <- c("ID", "SampID")
+#проверка дубликатов среди пациентов
+if(length(unique(Msamp$ID)) != nrow(Msamp)){
+   print("Есть дубликаты среди пациентов")
+   }
+```
+
+
+Оставляем пациентов с метастазами:
+
+```{r}
+Msamp <- inner_join(Msamp, patients, by = "ID") %>%
+  dplyr::select(!"ID")
+```
+
+
+Данные mRNA:
+
+```{r}
+mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
+mRNA <- mRNA_raw %>%
+  dplyr::select(!Hugo_Symbol)
+mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
+
+#транспонирование
+mRNA <- t(mRNA) %>%
+  as.data.frame()
+colnames(mRNA) <- mRNA[1,]
+mRNA$SampID <- row.names(mRNA)
+mRNA <- mRNA[-1,] %>%
+  dplyr::select(SampID, everything())
+
+#оставляем только нужные образцы (метастазы)
+MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
+  dplyr::select(!c("status", "time"))
+```
+
+```{r include=FALSE}
+mRNA <- NULL
+mRNA_raw <- NULL
+patients <- NULL
+samples <- NULL
+```
+
+
+Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
+
+```{r}
+MmRNA_num <- MmRNA %>%
+  dplyr::select(where(is.numeric))%>%
+  dplyr::select(function(x) sum(x) != 0)%>%
+  dplyr::select(function(x) mad(x) != 0)
+MmRNA_transf <- log2(MmRNA_num + 1)
+MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - mean(x))/sd(x))
+
+genes <- 
+  apply(MmRNA_transf, 2, sd) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+MmRNA_res <- MmRNA_transf[, genes]
+
+Msurv_res <- Msamp %>%
+  dplyr::select(!`SampID`)
+```
+
+
+
+```{r include=FALSE}
+MmRNA <- NULL
+MmRNA_transf <- NULL
+MmRNA_num <- NULL
+MmRNA_scaled <- NULL
+Msamp <- NULL
+```
+
+
+
+
+###Glmnet
+
+```{r}
+y<-Msurv_res
+x<-MmRNA_res
+```
+
+
+
+Тест и трейн сплит (20:80)
+```{r}
+set.seed(114)
+
+indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
+indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)
+
+xtrain_ns <- x[indexes_tr,]
+ytrain <- y[indexes_tr,]
+xtest_ns <- x[indexes_te,]
+ytest <- y[indexes_te,]
+```
+
+
+скейлим x отдельно для тест и трейн
+
+```{r}
+xtrain <- apply(xtrain_ns, 2, function(x) (x - mean(x))/sd(x))
+xtest <- apply(xtest_ns, 2, function(x) (x - mean(x))/sd(x))
+```
+
+
+Что происходит с коэффициентами по мере роста штрафа:
+
+```{r}
+set.seed(89)
+ytrain.surv <- Surv(ytrain$time,ytrain$status)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=1)
+plot(fit.coxnet,xvar="lambda")
+```
+
+
+Выбор лямбды (штрафа) с помощью кросс-валидации:
+
+```{r}
+cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
+                       family="cox",
+                       type.measure="C",
+                       nfolds = 5,
+                       alpha=1)
+plot(cv.coxnet)
+cv.coxnet
+```
+
+
+
+График ненулевых коэффициентов:
+
+```{r}
+dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
+dbeta$betaname <- colnames(x)
+dbeta%>%
+  filter(betahat!=0)%>%
+  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
+  geom_bar(stat="identity",width=0.5)+
+  xlab("gene")+ylab("abs(betahat)")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
+        text = element_text(size = 15))
+```
+
+3824 - KLRD1 killer cell lectin like receptor D1
+115361 - GBP4 guanylate binding protein 4
+4948 - OCA2 OCA2 melanosomal transmembrane protein
+
+
+Предсказание относительного риска по Коксу (>1 <-> poor):
+
+```{r}
+hazard <- predict(fit.coxnet,
+              newx=xtest,
+              s=cv.coxnet$lambda.1se,
+              type="response")
+Res_haz<-ytest
+Res_haz$hazard <- hazard
+Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
+ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
+                    data = Res_haz),conf.int = TRUE)
+```
+
+
+
+##3.3 mean-sd (mad)
+
+Параметры:
+OS-DSS, mean/sd, mad, альфа=1
+
+
+###Data-preprocessing
+
+
+Данные пациентов:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+patients <- read_tsv("data_clinical_patient.txt", skip = 4)#исходные данные
+patients <- patients %>%
+  dplyr::select("PATIENT_ID", "OS_STATUS", "OS_MONTHS", "DSS_STATUS")%>%
+  filter(!(DSS_STATUS=="0:ALIVE OR DEAD TUMOR FREE" & OS_STATUS == "1:DECEASED"))%>%
+  dplyr::select(!"DSS_STATUS")%>%
+  na.omit()%>%
+  mutate(`OS_STATUS` = ifelse(`OS_STATUS` == "1:DECEASED", 1, 0))
+colnames(patients) <- c("ID", "status", "time")
+```
+
+
+Данные образцов:
+
+```{r echo=TRUE}
+samples <- read_tsv("data_clinical_sample.txt", skip = 4)#исходные данные
+samples <- samples %>%
+  dplyr::select("PATIENT_ID", "SAMPLE_ID", "SAMPLE_TYPE")
+
+Msamp <- samples %>%
+  filter(`SAMPLE_TYPE` == "Metastasis") %>%
+  dplyr::select(!"SAMPLE_TYPE")#367
+colnames(Msamp) <- c("ID", "SampID")
+#проверка дубликатов среди пациентов
+if(length(unique(Msamp$ID)) != nrow(Msamp)){
+   print("Есть дубликаты среди пациентов")
+   }
+```
+
+
+Оставляем пациентов с метастазами:
+
+```{r}
+Msamp <- inner_join(Msamp, patients, by = "ID") %>%
+  dplyr::select(!"ID")
+```
+
+
+Данные mRNA:
+
+```{r}
+mRNA_raw <- read_tsv("data_mrna_seq_v2_rsem.txt")
+mRNA <- mRNA_raw %>%
+  dplyr::select(!Hugo_Symbol)
+mRNA <- mRNA[!duplicated(mRNA$Entrez_Gene_Id), ]
+
+#транспонирование
+mRNA <- t(mRNA) %>%
+  as.data.frame()
+colnames(mRNA) <- mRNA[1,]
+mRNA$SampID <- row.names(mRNA)
+mRNA <- mRNA[-1,] %>%
+  dplyr::select(SampID, everything())
+
+#оставляем только нужные образцы (метастазы)
+MmRNA <- inner_join(Msamp, mRNA, by = "SampID") %>%
+  dplyr::select(!c("status", "time"))
+```
+
+```{r include=FALSE}
+mRNA <- NULL
+mRNA_raw <- NULL
+patients <- NULL
+samples <- NULL
+```
+
+
+Оставим для анализа 1500 самых вариабельных генов и преобразуем данные:
+
+```{r}
+MmRNA_num <- MmRNA %>%
+  dplyr::select(where(is.numeric))%>%
+  dplyr::select(function(x) sum(x) != 0)%>%
+  dplyr::select(function(x) mad(x) != 0)
+MmRNA_transf <- log2(MmRNA_num + 1)
+MmRNA_scaled <- apply(MmRNA_transf, 2, function(x) (x - mean(x))/sd(x))
+
+genes <- 
+  apply(MmRNA_transf, 2, mad) %>%
+  sort(decreasing = T) %>%
+  .[1:1500] %>%
+  names()
+MmRNA_res <- MmRNA_transf[, genes]
+
+Msurv_res <- Msamp %>%
+  dplyr::select(!`SampID`)
+```
+
+
+
+```{r include=FALSE}
+MmRNA <- NULL
+MmRNA_transf <- NULL
+MmRNA_num <- NULL
+MmRNA_scaled <- NULL
+Msamp <- NULL
+```
+
+
+
+
+###Glmnet
+
+```{r}
+y<-Msurv_res
+x<-MmRNA_res
+```
+
+
+
+Тест и трейн сплит (20:80)
+```{r}
+set.seed(114)
+
+indexes_tr <- sample(1:nrow(y),size=round(nrow(y)*0.8))
+indexes_te <- setdiff(c(1:nrow(y)), indexes_tr)
+
+xtrain_ns <- x[indexes_tr,]
+ytrain <- y[indexes_tr,]
+xtest_ns <- x[indexes_te,]
+ytest <- y[indexes_te,]
+```
+
+
+скейлим x отдельно для тест и трейн
+
+```{r}
+xtrain <- apply(xtrain_ns, 2, function(x) (x - mean(x))/sd(x))
+xtest <- apply(xtest_ns, 2, function(x) (x - mean(x))/sd(x))
+```
+
+
+Что происходит с коэффициентами по мере роста штрафа:
+
+```{r}
+set.seed(89)
+ytrain.surv <- Surv(ytrain$time,ytrain$status)
+fit.coxnet <- glmnet(xtrain, ytrain.surv, family = "cox",alpha=1)
+plot(fit.coxnet,xvar="lambda")
+```
+
+
+Выбор лямбды (штрафа) с помощью кросс-валидации:
+
+```{r}
+cv.coxnet <- cv.glmnet(xtrain,ytrain.surv,
+                       family="cox",
+                       type.measure="C",
+                       nfolds = 5,
+                       alpha=1)
+plot(cv.coxnet)
+cv.coxnet
+```
+
+
+
+График ненулевых коэффициентов:
+
+```{r}
+dbeta <- data.frame(betahat=as.numeric(coef(fit.coxnet,s=cv.coxnet$lambda.1se)))
+dbeta$betaname <- colnames(x)
+dbeta%>%
+  filter(betahat!=0)%>%
+  ggplot(.,aes(x=reorder(betaname,abs(betahat)),y=abs(betahat)))+
+  geom_bar(stat="identity",width=0.5)+
+  xlab("gene")+ylab("abs(betahat)")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=7),
+        text = element_text(size = 15))
+```
+
+3824 - KLRD1 killer cell lectin like receptor D1
+115361 - GBP4 guanylate binding protein 4
+4948 - OCA2 OCA2 melanosomal transmembrane protein
+
+
+Предсказание относительного риска по Коксу (>1 <-> poor):
+
+```{r}
+hazard <- predict(fit.coxnet,
+              newx=xtest,
+              s=cv.coxnet$lambda.1se,
+              type="response")
+Res_haz<-ytest
+Res_haz$hazard <- hazard
+Res_haz$prognosis <- ifelse(hazard>1,"poor","good")
+ggsurvplot(survfit(Surv(time, status) ~ prognosis, 
+                    data = Res_haz),conf.int = TRUE)
+```
