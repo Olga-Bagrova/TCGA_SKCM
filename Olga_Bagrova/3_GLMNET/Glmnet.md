@@ -206,9 +206,9 @@ dbeta%>%
 
 ![](Glmnet_files/figure-html/unnamed-chunk-14-1.png)<!-- -->
 
-3824 - KLRD1 killer cell lectin like receptor D1
-115361 - GBP4 guanylate binding protein 4
-4948 - OCA2 OCA2 melanosomal transmembrane protein
+* 3824 - KLRD1 killer cell lectin like receptor D1
+* 115361 - GBP4 guanylate binding protein 4
+* 4948 - OCA2 OCA2 melanosomal transmembrane protein
 
 
 Предсказание относительного риска по Коксу (>1 <-> poor):
@@ -428,6 +428,8 @@ dbeta%>%
 ![](Glmnet_files/figure-html/unnamed-chunk-28-1.png)<!-- -->
 
 
+* 3824 - KLRD1 killer cell lectin like receptor D1
+
 
 Предсказания hazards (деление на poor/good ><1):
 
@@ -645,6 +647,10 @@ dbeta%>%
 ```
 
 ![](Glmnet_files/figure-html/unnamed-chunk-42-1.png)<!-- -->
+
+
+* 400759 - GBP1P1 guanylate binding protein 1 pseudogene 1
+
 
 Предсказания hazards (деление на poor/good ><1):
 
@@ -867,10 +873,10 @@ dbeta%>%
 
 ![](Glmnet_files/figure-html/unnamed-chunk-56-1.png)<!-- -->
 
-3824 - KLRD1 killer cell lectin like receptor D1
-115361 - GBP4 guanylate binding protein 4
-4948 - OCA2 OCA2 melanosomal transmembrane protein
-400759 - 
+* 3824 - KLRD1 killer cell lectin like receptor D1
+* 115361 - GBP4 guanylate binding protein 4
+* 4948 - OCA2 OCA2 melanosomal transmembrane protein
+* 400759 - GBP1P1 guanylate binding protein 1 pseudogene 1
 
 
 Предсказание относительного риска по Коксу (>1 <-> poor):
@@ -1093,9 +1099,11 @@ dbeta%>%
 
 ![](Glmnet_files/figure-html/unnamed-chunk-70-1.png)<!-- -->
 
-3824 - KLRD1 killer cell lectin like receptor D1
-115361 - GBP4 guanylate binding protein 4
-4948 - OCA2 OCA2 melanosomal transmembrane protein
+* 3824 - KLRD1 killer cell lectin like receptor D1
+* 115361 - GBP4 guanylate binding protein 4
+* 4948 - OCA2 OCA2 melanosomal transmembrane protein
+* 115361 - GBP4 guanylate binding protein 4
+* 65268 - WNK2 WNK lysine deficient protein kinase 2
 
 
 Предсказание относительного риска по Коксу (>1 <-> poor):
@@ -1309,9 +1317,9 @@ dbeta%>%
 
 ![](Glmnet_files/figure-html/unnamed-chunk-84-1.png)<!-- -->
 
-3824 - KLRD1 killer cell lectin like receptor D1
-115361 - GBP4 guanylate binding protein 4
-4948 - OCA2 OCA2 melanosomal transmembrane protein
+* 3824 - KLRD1 killer cell lectin like receptor D1
+* 115361 - GBP4 guanylate binding protein 4
+* 4948 - OCA2 OCA2 melanosomal transmembrane protein
 
 
 Предсказание относительного риска по Коксу (>1 <-> poor):
