@@ -1338,3 +1338,20 @@ ggsurvplot(survfit(Surv(time, status) ~ prognosis,
 ```
 
 ![](Glmnet_files/figure-html/unnamed-chunk-85-1.png)<!-- -->
+
+
+#Results
+
+
+
+```r
+mat <- (matrix(c(1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0), ncol=6, nrow=7))
+mat<-t(mat)
+data <- data.frame(data=mat, row.names =  c("M1", "M2", "M3", "M4", "M5", "M6"))
+colnames(data) <-  c("KLRD1", "GBP4", "OCA2", "CCL8", "GBP1P1", "HSPA7", "WNK2")
+m = make_comb_mat(data)
+
+UpSet(m)
+```
+
+![](Glmnet_files/figure-html/unnamed-chunk-86-1.png)<!-- -->
