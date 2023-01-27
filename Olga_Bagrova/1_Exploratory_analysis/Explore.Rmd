@@ -1,0 +1,226 @@
+---
+title: "ОИ2:эксплораторный анализ"
+author: "Багрова Ольга"
+date: '2022-10-10'
+output:
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(gtsummary)
+library(factoextra)
+library(ggbiplot)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(plotly)
+library(tibble)
+library(matrixStats)
+```
+
+
+#Анализ клинических данных
+
+
+##Пациенты
+
+
+Из файла: data_clinical_patient.txt
+```{r}
+patients <- read_tsv("data_clinical_patient.txt", skip = 4)
+skimr::skim(patients)
+```
+
+
+*Всего пациентов 442*
+
+
+Описание файла:
+
+* PATIENT_ID	-	идентификатор пациента (TCGA-3N-A9WC)
+* SUBTYPE		-	название проекта (SKCM)
+* CANCER_TYPE_ACRONYM -	TCGA PanCanAtlas аббревиатура типа рака (SKCM)
+* OTHER_PATIENT_ID -	Устаревший идентификатор пациента DMP
+* AGE		-	возраст когда болезнь впервые диагностирована
+* SEX		-	пол
+* AJCC_PATHOLOGIC_TUMOR_STAGE - Степень злокачественности по критериям AJCC (STAGE IIIA)
+* AJCC_STAGING_EDITION -	Издание публикации Американского объединенного комитета по борьбе с раком (7TH)
+* DAYS_LAST_FOLLOWUP -	Количество дней от даты последнего наблюдения до даты первоначальной постановки диагноза (387)
+* DAYS_TO_BIRTH	-	Количество дней от дня рождения до дня первоначально поставленного диагноза (-30163)
+* DAYS_TO_INITIAL_PATHOLOGIC_DIAGNOSIS - Количество дней от последнего дня когда чел был жив (известно), до даты первоначального диагноза (0)
+* ETHNICITY	-	этническая характеристика (Not Hispanic Or Latino)
+* FORM_COMPLETION_DATE -	дата заполнения формы (5/29/14)
+* HISTORY_NEOADJUVANT_TRTYN - неадъювантное лечение (т.е. с помощью ЛП) пациента до резекции опухоли (No)
+* ICD_10		-	классификация ICD-10 (C44.9) типо международная классификация болезней
+* ICD_O_3_HISTOLOGY -	международная классификация онко заболеваний: гистологический код (8720/3)
+* ICD_O_3_SITE	-	международная классификация онко заболеваний: site код (C77.3)
+* INFORMED_CONSENT_VERIFIED - есть ли информированное согласие (Yes)
+* NEW_TUMOR_EVENT_AFTER_INITIAL_TREATMENT - была ли у пациента новая опухоль после первоначального лечения (Yes)
+* PATH_M_STAGE	-	коды метастаз (M0)
+* PATH_N_STAGE	-	коды неоплайзии (NX)
+* PATH_T_STAGE	-	коды опухоли (T2A)
+* PERSON_NEOPLASM_CANCER_STATUS - Статус рака новообразования человека(Tumor Free)
+* PRIMARY_LYMPH_NODE_PRESENTATION_ASSESSMENT - Оценка первичного расположения лимфатических узлов	ПУСТЫЕ
+* PRIOR_DX	-	Предварительный диагноз (No)
+* RACE		-	раса (White)
+* RADIATION_THERAPY-	была ли лучевая терапия (No)
+* WEIGHT		-	вес пациента (68)
+* IN_PANCANPATHWAYS_FREEZE-пациентская часть анализа пути PanCan (No)
+* OS_STATUS	-	общий статус выживания (1:DECEASED)
+* OS_MONTHS	-	общая выживаемость в месяцах с начала диагноза (66.47598383)
+* DSS_STATUS	-	статус выживаемости в зависимости от заболевания, т.е. время с момента постановки диагноза/начала лечения и заканивается в момент смерти (1:DEAD WITH TUMOR)
+* DSS_MONTHS	-	месяцы к предыдущему (12.98615906)
+* DFS_STATUS	-	без заболевания с начала лечения статус	ПУСТЫЕ
+* DFS_MONTHS	-	месяцев	ПУСТЫЕ
+* PFS_STATUS	-	статус прогрессии (1:PROGRESSION)
+* PFS_MONTHS	-	выживаемость без прогресса (28.04352829)
+
+
+Более наглядно про некоторые данные:
+
+
+Возраст, когда поставили диагноз
+```{r}
+patients%>%
+  ggplot()+
+  geom_histogram(aes(x=AGE), 
+                 color="black",
+                 fill="#FF3390")+
+  ggtitle("Распределение по возрастам")+
+  labs(x="возраст, лет", y="количество, пац")
+```
+
+
+Вес пациентов
+```{r}
+patients%>%
+  ggplot()+
+  geom_histogram(aes(x=WEIGHT), 
+                 color="black",
+                 fill="cyan")+
+  ggtitle("Распределение по весу")+
+  labs(x="вес, кг", y="количество, пац")
+```
+
+
+Пол пациентов:
+```{r}
+N<-nrow(patients)
+
+m <- patients %>%
+  filter(SEX == 'Male')%>%
+  nrow()/N*100
+
+f <- patients %>%
+  filter(SEX == 'Female')%>%
+  nrow()/N*100
+
+#na <- patients %>%
+#  nrow()
+#na <- na-m-f
+
+df <- data.frame(
+  sex = c("Male", "Female"),
+  value = c(m, f)
+  )
+
+df %>%
+  ggplot(
+    aes(x="", y=value, fill=sex))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y", start=0)
+
+```
+
+
+Степень злокачественности по AJCC
+```{r}
+patients$AJCC_PATHOLOGIC_TUMOR_STAGE<-gsub("STAGE","",as.character(patients$AJCC_PATHOLOGIC_TUMOR_STAGE))
+
+patients%>%
+  ggplot()+
+  geom_bar(aes(x=AJCC_PATHOLOGIC_TUMOR_STAGE), position="dodge", fill = "green", color = "black")+
+  ggtitle("Стадия по AJCC")+
+  labs(x="Стадия", y="количество, пац")
+```
+
+
+
+
+##Образцы
+
+Из файла: data_clinical_sample.txt
+```{r}
+samples <- read_tsv("data_clinical_sample.txt", skip = 4)
+skimr::skim(samples)
+```
+
+
+*Всего образцов 448*
+
+Описание файла:
+
+* PATIENT_ID	-	айдентификатор пациента (TCGA-BF-A1PX)
+* SAMPLE_ID	-	айлентификатор образца	TCGA-BF-A1PX-01)
+* ONCOTREE_CODE	-	Oncotree Code	http://oncotree.mskcc.org/ (SKCM)
+* CANCER_TYPE	-	тип рака (Melanoma)
+* CANCER_TYPE_DETAILED-	тип рака детальнее (Cutaneous Melanoma)
+* TUMOR_TYPE	-	тип опухоли (Skin Cutaneous Melanoma)
+* GRADE		-	Гистологическая степень новообразования (NA)
+* TISSUE_PROSPECTIVE_COLLECTION_INDICATOR- Сбор тканей проспективный (Yes)
+* TISSUE_RETROSPECTIVE_COLLECTION_INDICATOR-Сбор тканей ретроспективный(No)
+* TISSUE_SOURCE_SITE_CODE-код откуда ткань (BF)
+* TUMOR_TISSUE_SITE-	Анатомическое место опухоли (Regional Lymph Node|Trunk)
+* ANEUPLOIDY_SCORE - 	Оценка анеуплоидии (9)
+* SAMPLE_TYPE	- 	тип образца:i.e., normal, primary, met, recurrence (Metastasis)
+* MSI_SCORE_MANTIS-	Оценка MSI MANTIS (0.2612)
+* MSI_SENSOR_SCORE-	Оценка MSI, полученная с помощью датчика MSI (0.08)
+* SOMATIC_STATUS	-	Соматический статус (Matched)
+* TMB_NONSYNONYMOUS-	Tumor Mutational Burden = Мутационная нагрузка опухоли несинонимичный (26.33333333) - * TMB, определяемый как количество соматических мутаций на мегабазу исследуемой геномной последовательности, варьируется в зависимости от злокачественных новообразований. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7710563/
+* TISSUE_SOURCE_SITE-	источник тканей образца: tissue, cell, or blood и клинические метаданные, которые затем отправляются на основной ресурс Biospecimen (Cureline)
+
+
+
+Тип опухоли:
+```{r}
+p <- samples %>%
+  filter(SAMPLE_TYPE == 'Primary')%>%
+  nrow()/N
+
+m <- samples %>%
+  filter(SAMPLE_TYPE == 'Metastasis')%>%
+  nrow()/N
+
+#na <- samples %>%
+#  nrow()
+#na <- na-m-p
+
+df <- data.frame(
+  type = c("Primary", "Metastasis"),
+  value = c(p, m)
+  )
+
+df %>%
+  ggplot(
+    aes(x="", y=value, fill=type))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y", start=0)
+
+```
+
+
+
+
+*Итого:*
+448 образцов от 442 пациентов (у 6 пациентов доступны образцы primary и metastasis, которые различаются по ANEUPLOIDY_SCORE,	SAMPLE_TYPE,	MSI_SCORE_MANTIS,	MSI_SENSOR_SCORE,	TMB_NONSYNONYMOUS)
+
+
+```{r}
+samples$PATIENT_ID[duplicated(samples$PATIENT_ID)]
+```
