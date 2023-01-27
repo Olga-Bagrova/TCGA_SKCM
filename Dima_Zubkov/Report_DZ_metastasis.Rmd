@@ -1,7 +1,7 @@
 ---
 title: "TCGA_SKCM_Report_DZ_metastasis"
 author: "Dmitry Zubkov"
-date: "December 16, 2022"
+date: "January 27, 2023"
 output: md_document
 ---
 
@@ -15,6 +15,7 @@ library(factoextra)
 library(ComplexHeatmap)
 library(dendextend)
 library(clusterProfiler)
+library(org.Hs.eg.db)
 theme_set(theme_bw())
 
 color <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")
@@ -210,13 +211,13 @@ smpl.grp <- case_when(smpl.grp == 1 ~ "S4",
                  smpl.grp == 4 ~ "S3")
 
 df <- tibble(`Gene Cluster` = as.character(),
-             Sample = as.character(),
+             SAMPLE_ID = as.character(),
              Expression = as.numeric())
 for (i in c("G1", "G2", "G3", "G4")) {
   expr.cluster <- apply(mat[, gene.grp == i], 1, median)
   df <- 
     tibble(`Gene Cluster` = i,
-           Sample = names(expr.cluster),
+           SAMPLE_ID = names(expr.cluster),
            Expression = expr.cluster) %>%
     rbind(df, .)
 }
@@ -235,7 +236,7 @@ df.stat <-
                       ref.group = ".all.",
                       method = "wilcox.test", 
                       p.adjust.method = "bonferroni") %>%
-  rename(`Sample Cluster` = group2,
+  dplyr::rename(`Sample Cluster` = group2,
          `Gene Cluster` = Gene.Cluster)
 
 ggplot(df, aes(x = as.factor(0), y = Expression)) +
@@ -249,6 +250,16 @@ ggplot(df, aes(x = as.factor(0), y = Expression)) +
   ylim(-1.8, 1.8) +
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank())
+
+df <- left_join(df, df.meta, by = "SAMPLE_ID")
+
+filter(df, `Gene Cluster` == "G1") %>%
+  coxph(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ Expression, data = .) %>%
+  summary()
+
+filter(df, `Gene Cluster` == "G1") %>%
+  coxph(formula = Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ Expression, data = .) %>%
+  summary()
 
 ```
 
