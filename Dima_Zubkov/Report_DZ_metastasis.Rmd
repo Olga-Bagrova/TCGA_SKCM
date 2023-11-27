@@ -1,7 +1,7 @@
 ---
 title: "TCGA_SKCM_Report_DZ_metastasis"
 author: "Dmitry Zubkov"
-date: "December 16, 2022"
+date: "January 27, 2023"
 output: md_document
 ---
 
@@ -14,6 +14,8 @@ library(survminer)
 library(factoextra)
 library(ComplexHeatmap)
 library(dendextend)
+library(clusterProfiler)
+library(org.Hs.eg.db)
 theme_set(theme_bw())
 
 color <- c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00")
@@ -27,16 +29,18 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE,
 df.s <- read_tsv("../raw/data_clinical_sample.txt", skip = 4)
 df.p <- read_tsv("../raw/data_clinical_patient.txt", skip = 4)
 
-df.p <- select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_STAGING_EDITION, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
-df.s <- select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
-
-duplicates <- df.s$PATIENT_ID[duplicated(df.s$PATIENT_ID)]
+df.p <- dplyr::select(df.p, PATIENT_ID, AGE, SEX, RACE, ETHNICITY, AJCC_PATHOLOGIC_TUMOR_STAGE, OS_STATUS, OS_MONTHS, PFS_STATUS, PFS_MONTHS)
+df.s <- dplyr::select(df.s, PATIENT_ID, SAMPLE_ID, SAMPLE_TYPE, TMB_NONSYNONYMOUS)
 
 df.meta <-
   left_join(df.p, df.s) %>%
-  #filter(!(PATIENT_ID %in% duplicates)) %>%
   filter(SAMPLE_TYPE == "Metastasis") %>%
-  filter(SAMPLE_ID != "TCGA-GN-A269-01")
+  filter(SAMPLE_ID != "TCGA-GN-A269-01") %>%
+  mutate(STAGE = case_when(is.na(AJCC_PATHOLOGIC_TUMOR_STAGE) ~ as.character(NA),
+                           str_detect(AJCC_PATHOLOGIC_TUMOR_STAGE, "STAGE IV") ~ "STAGE III-IV",
+                           str_detect(AJCC_PATHOLOGIC_TUMOR_STAGE, "STAGE III") ~ "STAGE III-IV",
+                                      TRUE ~ "STAGE 0-II"))
+  
 
 rm(df.s, df.p)
 
@@ -48,8 +52,8 @@ rm(df.s, df.p)
 
 df.t <- 
   read_tsv("../raw/data_mrna_seq_v2_rsem.txt") %>%
-  select(-Hugo_Symbol) %>%
-  select(Entrez_Gene_Id, all_of(df.meta$SAMPLE_ID)) %>%
+  dplyr::select(-Hugo_Symbol) %>%
+  dplyr::select(Entrez_Gene_Id, all_of(df.meta$SAMPLE_ID)) %>%
   distinct(Entrez_Gene_Id, .keep_all = TRUE)
 
 mat <- t(df.t[-1])
@@ -109,24 +113,35 @@ Heatmap(t(mat),
 ### Gene ontology by gene clusters
 
 ```{r gene_ontology}
-grp <- cutree(gene.dend, k = k.gene)
-grp <- case_when(grp == 1 ~ "G2",
-                 grp == 2 ~ "G4",
-                 grp == 3 ~ "G3",
-                 grp == 4 ~ "G1")
+gene.grp <- cutree(gene.dend, k = k.gene)
+gene.grp <- case_when(gene.grp == 1 ~ "G2",
+                 gene.grp == 2 ~ "G4",
+                 gene.grp == 3 ~ "G3",
+                 gene.grp == 4 ~ "G1")
 
-ck.bp <- clusterProfiler::compareCluster(geneCluster = list("G1" = colnames(mat)[grp == "G1"],
-                                                            "G2" = colnames(mat)[grp == "G2"],
-                                                            "G3" = colnames(mat)[grp == "G3"],
-                                                            "G4" = colnames(mat)[grp == "G4"]),
-                                         fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "BP",
-                                         universe = colnames(mat),
-                                         pvalueCutoff = 0.05, qvalueCutoff = 1)
 
-clusterProfiler::dotplot(ck.bp, by = "count", showCategory = 5, 
-                         title = "Gene Ontology enrichment") + 
-  scale_colour_gradient(limits=c(0, 0.05), low="red", high="blue") +
-  theme(plot.title = element_text(hjust = 0.5))
+# ck.kegg <- compareCluster(geneClusters = list("G1" = colnames(mat)[gene.grp == "G1"],
+#                                               "G2" = colnames(mat)[gene.grp == "G2"],
+#                                               "G3" = colnames(mat)[gene.grp == "G3"],
+#                                               "G4" = colnames(mat)[gene.grp == "G4"]),
+#                           fun = "enrichKEGG",
+#                           universe = colnames(mat),
+#                           use_internal_data = TRUE,
+#                           pvalueCutoff = 0.05, qvalueCutoff = 1)
+
+
+ck.bp <- compareCluster(geneCluster = list("G1" = colnames(mat)[gene.grp == "G1"],
+                                           "G2" = colnames(mat)[gene.grp == "G2"],
+                                           "G3" = colnames(mat)[gene.grp == "G3"],
+                                           "G4" = colnames(mat)[gene.grp == "G4"]),
+                        fun = "enrichGO", OrgDb = "org.Hs.eg.db", ont = "BP",
+                        universe = colnames(mat),
+                        pvalueCutoff = 0.05, qvalueCutoff = 1)
+
+# dotplot(ck.bp, by = "count", showCategory = 5, 
+#         title = "Gene Ontology enrichment") + 
+#   scale_colour_gradient(limits=c(0, 0.05), low="red", high="blue") +
+#   theme(plot.title = element_text(hjust = 0.5))
 
 GO <-
   ck.bp@compareClusterResult[c(1, 3, 7)] %>%
@@ -148,7 +163,8 @@ rm(ck.bp, GO)
 ### Complete heatmap
 
 ```{r heatmap, fig.width = 9, fig.height = 6}
-smpl.ha <- HeatmapAnnotation(`G1 expression` = anno_points(apply(mat[, grp == "G1"], 1, median)))
+smpl.ha <- HeatmapAnnotation(`G1 expression` = anno_points(apply(mat[, gene.grp == "G1"], 1, median)),
+                             `Stage` = df.meta$STAGE)
 
 gene.ha <- rowAnnotation(foo = anno_empty(border = FALSE, width = max_text_width(unlist(text_list)) + unit(4, "mm")))
 
@@ -179,31 +195,105 @@ for(i in 1:k.gene) {
 dev.off()
 ```
 
+### Simplified heatmap
+```{r boxplot, fig.height = 4, fig.width = 4.5}
+
+gene.grp <- cutree(gene.dend, k = k.gene)
+gene.grp <- case_when(gene.grp == 1 ~ "G2",
+                 gene.grp == 2 ~ "G4",
+                 gene.grp == 3 ~ "G3",
+                 gene.grp == 4 ~ "G1")
+
+smpl.grp <- cutree(smpl.dend, k = k.smpl)
+smpl.grp <- case_when(smpl.grp == 1 ~ "S4",
+                 smpl.grp == 2 ~ "S1",
+                 smpl.grp == 3 ~ "S2",
+                 smpl.grp == 4 ~ "S3")
+
+df <- tibble(`Gene Cluster` = as.character(),
+             SAMPLE_ID = as.character(),
+             Expression = as.numeric())
+for (i in c("G1", "G2", "G3", "G4")) {
+  expr.cluster <- apply(mat[, gene.grp == i], 1, median)
+  df <- 
+    tibble(`Gene Cluster` = i,
+           SAMPLE_ID = names(expr.cluster),
+           Expression = expr.cluster) %>%
+    rbind(df, .)
+}
+df <- mutate(df, `Sample Cluster` = rep(smpl.grp, 4))
+
+# ggpubr::compare_means(Expression ~ Sample_Cluster, 
+#                       data = mutate(df, Sample_Cluster = `Sample Cluster`),
+#                       group.by = "Gene Cluster",
+#                       method = "kruskal.test", 
+#                       p.adjust.method = "bonferroni")
+
+df.stat <-
+  ggpubr::compare_means(Expression ~ Sample_Cluster, 
+                      data = mutate(df, Sample_Cluster = `Sample Cluster`),
+                      group.by = "Gene Cluster",
+                      ref.group = ".all.",
+                      method = "wilcox.test", 
+                      p.adjust.method = "bonferroni") %>%
+  dplyr::rename(`Sample Cluster` = group2,
+         `Gene Cluster` = Gene.Cluster)
+
+ggplot(df, aes(x = as.factor(0), y = Expression)) +
+  facet_grid(rows = vars(`Gene Cluster`), 
+             cols = vars(`Sample Cluster`)) +
+  geom_hline(yintercept = 0, linetype = 2, size = 1) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(height = 0, width = 0.2, size = 0.5, alpha = 0.5) +
+  geom_text(data = df.stat, 
+            aes(x = as.factor(0), y = 1.7, label = p.signif)) +
+  ylim(-1.8, 1.8) +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank())
+
+df <- left_join(df, df.meta, by = "SAMPLE_ID")
+
+filter(df, `Gene Cluster` == "G1") %>%
+  coxph(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ Expression, data = .) %>%
+  summary()
+
+filter(df, `Gene Cluster` == "G1") %>%
+  coxph(formula = Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ Expression, data = .) %>%
+  summary()
+
+```
+
+
 ### Survival analysis
 
 ```{r survival, fig.width = 4, fig.height = 3}
-grp <- cutree(smpl.dend, k = k.smpl)
-grp <- case_when(grp == 1 ~ "S4",
-                 grp == 2 ~ "S1",
-                 grp == 3 ~ "S2",
-                 grp == 4 ~ "S3")
+smpl.grp <- cutree(smpl.dend, k = k.smpl)
+smpl.grp <- case_when(smpl.grp == 1 ~ "S4",
+                 smpl.grp == 2 ~ "S1",
+                 smpl.grp == 3 ~ "S2",
+                 smpl.grp == 4 ~ "S3")
 df <- 
   df.meta %>%
-  mutate(CLUSTER = as.factor(grp))
+  mutate(CLUSTER = as.factor(smpl.grp))
 
-fit <- survfit(Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER + SAMPLE_TYPE, data = df)
+fit <- survfit(Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, data = df)
 
 # survdiff(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, data = df)
+# coxph(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, data = df)
+# pairwise_survdiff(formula = Surv(OS_MONTHS, as.numeric(as.factor(OS_STATUS))) ~ CLUSTER, 
+#                   data = df, p.adjust.method = "bonferroni")
 
 ggsurvplot(fit, data = df,
+           censor = FALSE,
                  color = "CLUSTER",
                  legend = "right", palette = "Set1",
                  legend.title = "CLUSTER",
                  title = "Overall Survival")
 
-fit <- survfit(Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ CLUSTER + SAMPLE_TYPE, data = df)
+fit <- survfit(Surv(PFS_MONTHS, as.numeric(as.factor(PFS_STATUS))) ~ CLUSTER, data = df)
 
 ggsurvplot(fit, data = df,
+           censor = FALSE,
                  color = "CLUSTER",
                  legend = "right", palette = "Set1",
                  legend.title = "CLUSTER",
@@ -215,9 +305,9 @@ ggsurvplot(fit, data = df,
 
 ```{r PCA, fig.width = 4, fig.height = 3}
 
-grp <- cutree(smpl.dend, k = k.smpl)
+smpl.grp <- cutree(smpl.dend, k = k.smpl)
 
-fviz_cluster(list(data = mat, cluster = grp),
+fviz_cluster(list(data = mat, cluster = smpl.grp),
              palette = "Set1",
              geom = "point",
              ellipse.type = "convex",
@@ -225,9 +315,9 @@ fviz_cluster(list(data = mat, cluster = grp),
              main = "Sample clusters",
              ggtheme = theme_minimal())
 
-grp <- cutree(gene.dend, k = k.gene)
+gene.grp <- cutree(gene.dend, k = k.gene)
 
-fviz_cluster(list(data = t(mat), cluster = grp),
+fviz_cluster(list(data = t(mat), cluster = gene.grp),
              palette = "Set1",
              geom = "point",
              ellipse.type = "convex",
